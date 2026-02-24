@@ -478,7 +478,7 @@ Vec3 randomUnitVector(std::mt19937 & gen)
     return { std::sin(theta)*std::cos(phi), std::sin(theta)*std::sin(phi), std::cos(theta) };
 }
 
-struct ParticleResult { Vec3 r; Vec3 v; double t; double varpi_dot_avg = 0.0; };
+struct ParticleResult { Vec3 r; Vec3 v; double t; double delta_varpi = 0.0; };
 
 // Generates randomized initial conditions for one scattering (v_inf is speed at infinity)
 ParticleResult generateInitialConditions(double v_inf, double r_p = 5.0)
@@ -721,11 +721,10 @@ ParticleResult evolveParticle(const BinaryOrbit& orbit, const ParticleResult ini
             dt = new_dt;
     }
 
-    double total_time = t_last_step - t_first_step;
-    double varpi_dot_avg = (total_time > 0) ? varpi_integral / total_time : 0.0;
+    double delta_varpi = varpi_integral;
 
     if (escaped)
-        return {r, v, t, varpi_dot_avg};
+        return {r, v, t, delta_varpi};
     else
         return { {NAN, NAN, NAN}, {NAN, NAN, NAN}, t, NAN };
 }
@@ -994,7 +993,7 @@ int main(int argc, char* argv[]) {
                         v_in[0], v_in[1], v_in[2],
                         dE, dv[0], dv[1], dv[2],
                         dL[0], dL[1], dL[2], dT,
-                        fin.varpi_dot_avg
+                        fin.delta_varpi
                     };
                     bin_out.write(reinterpret_cast<const char*>(record), sizeof(record));
                 }
@@ -1025,7 +1024,7 @@ int main(int argc, char* argv[]) {
 
             std::vector<double> ylm_buf(n_sh);
 
-            // 8 quantities: dE, dvx, dvy, dvz, dLx, dLy, dLz, varpi_dot_avg
+            // 8 quantities: dE, dvx, dvy, dvz, dLx, dLy, dLz, delta_varpi
             constexpr int N_Q = 8;
 
             for (int iv = 0; iv < (int)v_values.size(); ++iv) {
@@ -1047,7 +1046,7 @@ int main(int argc, char* argv[]) {
                     Vec3 dv = asymptotic_velocity_approx(fin.r, fin.v) - v_in;
                     Vec3 dL = angular_momentum(fin.r, fin.v) - angular_momentum(init.r, init.v);
 
-                    double X[N_Q] = {dE, dv[0], dv[1], dv[2], dL[0], dL[1], dL[2], fin.varpi_dot_avg};
+                    double X[N_Q] = {dE, dv[0], dv[1], dv[2], dL[0], dL[1], dL[2], fin.delta_varpi};
 
                     // Direction of incoming velocity
                     double v_mag = norm(v_in);
@@ -1090,12 +1089,12 @@ int main(int argc, char* argv[]) {
         fcut << Tcut_int << ".txt";
         std::ofstream out(fcut.str());
         out << "# N = " << N << ", rp_max = " << rp_max << ", r_sphere = " << r_sphere << ", T_cut = " << TmaxCut << "\n";
-        out << "# v\tmean∆E\tSEM_∆E\t∆T\tSEM_∆T\t∆vx\tSEM_∆vx\t∆vy\tSEM_∆vy\t∆vz\tSEM_∆vz\t∆Lx\tSEM_∆Lx\t∆Ly\tSEM_∆Ly\t∆Lz\tSEM_∆Lz\t<dvarpi/dt>\tSEM_<dvarpi/dt>\tNresolved\n";
+        out << "# v\tmean∆E\tSEM_∆E\t∆T\tSEM_∆T\t∆vx\tSEM_∆vx\t∆vy\tSEM_∆vy\t∆vz\tSEM_∆vz\t∆Lx\tSEM_∆Lx\t∆Ly\tSEM_∆Ly\t∆Lz\tSEM_∆Lz\tΔvarpi\tSEM_Δvarpi\tNresolved\n";
         for (int iv = 0; iv < (int)v_values.size(); ++iv) {
             double v = v_values[iv];
             // Filter particles with fin.t < TmaxCut
             // Recompute deltas only for these
-            std::vector<double> deltaE, deltaT, dvx, dvy, dvz, dLx, dLy, dLz, varpi_dot_vals;
+            std::vector<double> deltaE, deltaT, dvx, dvy, dvz, dLx, dLy, dLz, delta_varpi_vals;
             for (const auto &pair : all_results[iv]) {
                 const auto &init = pair.first;
                 const auto &fin  = pair.second;
@@ -1108,7 +1107,7 @@ int main(int argc, char* argv[]) {
                     Vec3 dL = angular_momentum(fin.r, fin.v) - angular_momentum(init.r, init.v);
                     dvx.push_back(dv[0]); dvy.push_back(dv[1]); dvz.push_back(dv[2]);
                     dLx.push_back(dL[0]); dLy.push_back(dL[1]); dLz.push_back(dL[2]);
-                    varpi_dot_vals.push_back(fin.varpi_dot_avg);
+                    delta_varpi_vals.push_back(fin.delta_varpi);
                 }
             }
             size_t N_res = deltaE.size();
@@ -1124,7 +1123,7 @@ int main(int argc, char* argv[]) {
             auto msLx = mean_std(dLx);
             auto msLy = mean_std(dLy);
             auto msLz = mean_std(dLz);
-            auto msVd = mean_std(varpi_dot_vals);
+            auto msVd = mean_std(delta_varpi_vals);
             out << v << "\t"
                 << msE.first  << "\t" << msE.second  / std::sqrt(N_res) << "\t"
                 << msT.first  << "\t" << msT.second  / std::sqrt(N_res) << "\t"
