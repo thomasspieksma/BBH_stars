@@ -1,0 +1,74 @@
+Login via ssh:
+
+	ssh tomaselli@ssh.sns.ias.edu
+
+Then access either typhon-login1 or typhon-login2 via ssh:
+
+	ssh typhon-login1
+
+Now
+
+	pwd
+
+should return
+
+	/home/tomaselli
+
+------------------------------------------------------------------------------------------
+
+You can copy files with (for example)
+
+	rsync -avzh main.cpp tomaselli@ssh.sns.ias.edu:/home/tomaselli/3-body-scattering/main.cpp
+
+
+On your laptop, compile, choose number of threads and run with
+
+	g++ -std=c++17 -Xpreprocessor -fopenmp -I/opt/homebrew/opt/libomp/include -L/opt/homebrew/opt/libomp/lib -lomp -O3 main.cpp -o scattering && export OMP_NUM_THREADS=8 && ./scattering
+
+On the cluster, compile with
+
+	g++ -std=c++17 -fopenmp -O3 -march=native main.cpp -o scattering
+
+------------------------------------------------------------------------------------------
+
+Prepare a file called run-scattering.slurm, with content like this:
+
+	#!/bin/bash
+	#SBATCH --job-name=scattering          # Job name
+	#SBATCH --output=scattering-%j.out     # Output file (%j = job ID)
+	#SBATCH --error=scattering-%j.err      # Error file
+	#SBATCH --nodes=1                      # Number of nodes
+	#SBATCH --time=00:30:00                # Walltime (HH:MM:SS)
+	
+	# Load any necessary modules (optional, if needed)
+	# module load gcc/12.2.0
+	
+	# Set OpenMP threads
+	export OMP_NUM_THREADS=6
+	
+	# Run your executable
+	srun ./scattering
+
+Copy it on the cluster with
+
+	rsync -avzh run-scattering.slurm tomaselli@ssh.sns.ias.edu:/home/tomaselli/3-body-scattering/run-scattering.slurm
+
+------------------------------------------------------------------------------------------
+
+Submit the job with
+
+	sbatch run-scattering.slurm
+
+Check its status with
+
+	squeue
+
+To cancel the job, run
+
+	scancel JOBID
+
+where JOBID should be replaced with something like 9424204.
+
+------------------------------------------------------------------------------------------
+
+rsync -avz 'tomaselli@ssh.sns.ias.edu:/home/tomaselli/3-body-scattering/q=*_e=*.txt' ./results/

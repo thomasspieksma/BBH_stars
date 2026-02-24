@@ -769,7 +769,7 @@ void printHist(const std::string& name, const std::vector<double>& data, int nBi
 
 std::vector<double> v_list(double q) // Generate N_v log-spaced values between v_min(q) and v_max(q)
 {
-    int N_v = 500;
+    int N_v = 2000;
     double v_min = (1.0/10) * (std::sqrt(q)/(2*(1+q))) * std::sqrt(0.001);
     double v_max = 4 * (2*std::sqrt(q)/(1+q)) * std::sqrt(100);
     
@@ -801,7 +801,7 @@ int main(int argc, char* argv[]) {
     bool split_by_Tcut = false;  // toggle to enable/disable multi‑Tcut output
 
     int max_steps = 1e9;
-    int N = 1e3;
+    int N = 1e4;
     double rp_max = 5.0;
     
     // Define cutoff times for statistics (logarithmically spaced)

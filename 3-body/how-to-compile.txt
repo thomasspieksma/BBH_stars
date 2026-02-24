@@ -1,0 +1,4 @@
+brew install libomp
+
+
+g++ -std=c++17 -Xpreprocessor -fopenmp -I/opt/homebrew/opt/libomp/include -L/opt/homebrew/opt/libomp/lib -lomp -O3 main.cpp -o scattering && export OMP_NUM_THREADS=3 && ./scattering
