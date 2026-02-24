@@ -426,7 +426,7 @@ Vec3 randomUnitVector(std::mt19937 & gen)
     return { std::sin(theta)*std::cos(phi), std::sin(theta)*std::sin(phi), std::cos(theta) };
 }
 
-struct ParticleResult { Vec3 r; Vec3 v; double t; };
+struct ParticleResult { Vec3 r; Vec3 v; double t; double delta_varpi = 0.0; };
 
 // Generates randomized initial conditions for one scattering (v_inf is speed at infinity)
 ParticleResult generateInitialConditions(double v_inf, double r_p = 5.0)
@@ -577,7 +577,7 @@ bool handleFarBoundKeplerMotion(Vec3 & r_old, Vec3 & v_old, double & t_old) // T
     return true;
 }
 
-ParticleResult evolveParticle(const BinaryOrbit& orbit, const ParticleResult init, double Tmax, int max_steps, const std::function<Vec3(const Vec3&, double)> & forceFunc, double tol = 0.01) // Example values: tol = 0.02 for RK45, tol = 0.01 for Pihajoki, tol = 0.005 for velocity Verlet
+ParticleResult evolveParticle(const BinaryOrbit& orbit, const ParticleResult init, double q, double e_bin, double Tmax, int max_steps, const std::function<Vec3(const Vec3&, double)> & forceFunc, double tol = 0.01) // Example values: tol = 0.02 for RK45, tol = 0.01 for Pihajoki, tol = 0.005 for velocity Verlet
 {
     Vec3 r_old = init.r, v_old = init.v;
     Vec3 r = init.r, v = init.v;
@@ -590,6 +590,12 @@ ParticleResult evolveParticle(const BinaryOrbit& orbit, const ParticleResult ini
     tol = std::min(tol, tol / pow(std::sqrt(norm(v)), 4)); // Need a very small tolerance for large values of v, otherwise small numerical errors lead to huge changes in the particle's energy as it quickly shoots through the system. I played with the tolerance and settled on the current formula for the tolerance after a lot of trial and error
     
     int steps = 0;
+
+    double varpi_dot_prev = 0.0;
+    double varpi_integral = 0.0;
+    double t_first_step = 0.0, t_last_step = 0.0;
+    bool first_accepted = true;
+    double gauss_prefactor = -std::sqrt((1.0 - e_bin * e_bin) / (e_bin * e_bin));
 
     bool escaped = false;
     while (!stoppingCondition(r, v, t, Tmax, steps, max_steps, &escaped))
@@ -623,6 +629,39 @@ ParticleResult evolveParticle(const BinaryOrbit& orbit, const ParticleResult ini
             r_old = r;
             v_old = v;
             t_old = t;
+
+            // Gauss' equation for apsidal precession rate (zero inclination)
+            Vec3 r1_bin, r2_bin;
+            interpolateBinaryPositions(orbit, t, r1_bin, r2_bin);
+            Vec3 r12 = r2_bin - r1_bin;
+            double r12_norm = norm(r12);
+
+            Vec3 dr_to_2 = r - r2_bin;
+            Vec3 dr_to_1 = r - r1_bin;
+            double d2 = norm(dr_to_2);
+            double d1 = norm(dr_to_1);
+            Vec3 a_rel = dr_to_2 / (d2*d2*d2) - dr_to_1 / (d1*d1*d1);
+
+            double cos_phi = r12[0] / r12_norm;
+            double sin_phi = r12[1] / r12_norm;
+            Vec3 r_hat = r12 / r12_norm;
+            Vec3 phi_hat = {-r_hat[1], r_hat[0], 0.0};
+
+            double a_r_val = a_rel * r_hat;
+            double a_phi_val = a_rel * phi_hat;
+            double e_cos_phi = e_bin * cos_phi;
+
+            double varpi_dot_curr = gauss_prefactor * (cos_phi * a_r_val
+                - (2.0 + e_cos_phi) / (1.0 + e_cos_phi) * sin_phi * a_phi_val);
+
+            if (first_accepted) {
+                t_first_step = t;
+                first_accepted = false;
+            } else {
+                varpi_integral += 0.5 * (varpi_dot_prev + varpi_dot_curr) * (t - t_last_step);
+            }
+            varpi_dot_prev = varpi_dot_curr;
+            t_last_step = t;
             
             dt = std::min(new_dt, dt * 1.5); // Limit too aggressive dt growth
         }
@@ -630,10 +669,12 @@ ParticleResult evolveParticle(const BinaryOrbit& orbit, const ParticleResult ini
             dt = new_dt;
     }
 
+    double delta_varpi = varpi_integral;
+
     if (escaped)
-        return {r, v, t};
+        return {r, v, t, delta_varpi};
     else
-        return { {NAN, NAN, NAN}, {NAN, NAN, NAN}, t };
+        return { {NAN, NAN, NAN}, {NAN, NAN, NAN}, t, NAN };
 }
 
 // Helper to compute mean and std deviation
@@ -795,7 +836,7 @@ int main(int argc, char* argv[]) {
         for (int i = 0; i < N; ++i)
         {
             ParticleResult init = generateInitialConditions(v, rp_max);
-            ParticleResult fin  = evolveParticle(orbit, init, Tmax, max_steps, forceFunc);
+            ParticleResult fin  = evolveParticle(orbit, init, q, e, Tmax, max_steps, forceFunc);
 
             if (!std::isnan(fin.r[0]))
                 results.push_back({init, fin});
@@ -859,12 +900,12 @@ int main(int argc, char* argv[]) {
         fcut << Tcut_int << ".txt";
         std::ofstream out(fcut.str());
         out << "# N = " << N << ", rp_max = " << rp_max << ", r_sphere = " << r_sphere << ", T_cut = " << TmaxCut << "\n";
-        out << "# v\tmean∆E\tSEM_∆E\t∆T\tSEM_∆T\t∆vx\tSEM_∆vx\t∆vy\tSEM_∆vy\t∆vz\tSEM_∆vz\t∆Lx\tSEM_∆Lx\t∆Ly\tSEM_∆Ly\t∆Lz\tSEM_∆Lz\tNresolved\n";
+        out << "# v\tmean∆E\tSEM_∆E\t∆T\tSEM_∆T\t∆vx\tSEM_∆vx\t∆vy\tSEM_∆vy\t∆vz\tSEM_∆vz\t∆Lx\tSEM_∆Lx\t∆Ly\tSEM_∆Ly\t∆Lz\tSEM_∆Lz\tΔvarpi\tSEM_Δvarpi\tNresolved\n";
         for (int iv = 0; iv < (int)v_values.size(); ++iv) {
             double v = v_values[iv];
             // Filter particles with fin.t < TmaxCut
             // Recompute deltas only for these
-            std::vector<double> deltaE, deltaT, dvx, dvy, dvz, dLx, dLy, dLz;
+            std::vector<double> deltaE, deltaT, dvx, dvy, dvz, dLx, dLy, dLz, delta_varpi_vals;
             for (const auto &pair : all_results[iv]) {
                 const auto &init = pair.first;
                 const auto &fin  = pair.second;
@@ -877,11 +918,12 @@ int main(int argc, char* argv[]) {
                     Vec3 dL = angular_momentum(fin.r, fin.v) - angular_momentum(init.r, init.v);
                     dvx.push_back(dv[0]); dvy.push_back(dv[1]); dvz.push_back(dv[2]);
                     dLx.push_back(dL[0]); dLy.push_back(dL[1]); dLz.push_back(dL[2]);
+                    delta_varpi_vals.push_back(fin.delta_varpi);
                 }
             }
             size_t N_res = deltaE.size();
             if (N_res < 2) {
-                out << v << "\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t" << N_res << "\n";
+                out << v << "\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t" << N_res << "\n";
                 continue;
             }
             auto msE  = mean_std(deltaE);
@@ -892,6 +934,7 @@ int main(int argc, char* argv[]) {
             auto msLx = mean_std(dLx);
             auto msLy = mean_std(dLy);
             auto msLz = mean_std(dLz);
+            auto msVd = mean_std(delta_varpi_vals);
             out << v << "\t"
                 << msE.first  << "\t" << msE.second  / std::sqrt(N_res) << "\t"
                 << msT.first  << "\t" << msT.second  / std::sqrt(N_res) << "\t"
@@ -901,6 +944,7 @@ int main(int argc, char* argv[]) {
                 << msLx.first << "\t" << msLx.second / std::sqrt(N_res) << "\t"
                 << msLy.first << "\t" << msLy.second / std::sqrt(N_res) << "\t"
                 << msLz.first << "\t" << msLz.second / std::sqrt(N_res) << "\t"
+                << msVd.first << "\t" << msVd.second / std::sqrt(N_res) << "\t"
                 << N_res << "\n";
         }
     }
