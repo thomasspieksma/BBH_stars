@@ -18,9 +18,9 @@ def b_max(v):
 def f(v, sigma):
     return np.sqrt(2/np.pi) * (v**2/sigma**3) * np.exp(-v**2 / (2*sigma**2))
 
-v, DeltaE, sDeltaE, DeltaT, sDeltaT, Deltavx, sDeltavx, Deltavy, sDeltavy, Deltavz, sDeltavz, DeltaLx, sDeltaLx, DeltaLy, sDeltaLy, DeltaLz, sDeltaLz, Nresolved = np.loadtxt('results_bonetti_Tcut/q='+str(q)+'_e='+str(e)+'.txt', unpack=True)
+v, DeltaE, sDeltaE, DeltaT, sDeltaT, Deltavx, sDeltavx, Deltavy, sDeltavy, Deltavz, sDeltavz, DeltaLx, sDeltaLx, DeltaLy, sDeltaLy, DeltaLz, sDeltaLz, Delta_varpi, sDelta_varpi, Nresolved = np.loadtxt('results_bonetti_Tcut/q='+str(q)+'_e='+str(e)+'.txt', unpack=True)
 
-# v, DeltaE, sDeltaE, DeltaT, sDeltaT, Deltavx, sDeltavx, Deltavy, sDeltavy, Deltavz, sDeltavz, DeltaLx, sDeltaLx, DeltaLy, sDeltaLy, DeltaLz, sDeltaLz, Nresolved = np.loadtxt('results/q='+str(q)+'_e='+str(e)+'.txt', unpack=True)
+# v, DeltaE, sDeltaE, DeltaT, sDeltaT, Deltavx, sDeltavx, Deltavy, sDeltavy, Deltavz, sDeltavz, DeltaLx, sDeltaLx, DeltaLy, sDeltaLy, DeltaLz, sDeltaLz, Delta_varpi, sDelta_varpi, Nresolved = np.loadtxt('results/q='+str(q)+'_e='+str(e)+'.txt', unpack=True)
 
 
 N_v = len(v)
@@ -55,6 +55,9 @@ stauv_z = - np.pi * b_max(v)**2 * rho * v * sDeltaLz
 Hv = (2 * np.pi * v**2 * b_max(v)**2) * DeltaE / mu
 sHv = (2 * np.pi * v**2 * b_max(v)**2) * sDeltaE / mu
 
+varpi_v = np.pi * b_max(v)**2 * rho * v * Delta_varpi
+svarpi_v = np.pi * b_max(v)**2 * rho * v * sDelta_varpi
+
 # Reshape for broadcasting and prepend zero row
 v0 = np.hstack([0, v])
 f0 = np.vstack([np.zeros((1, N_a_h)), f(v[:, np.newaxis], sigma[np.newaxis, :])])
@@ -83,6 +86,9 @@ stauv_z0 = np.vstack([np.zeros((1, N_a_h)), np.tile(stauv_z[:, np.newaxis], (1, 
 Hv0 = np.vstack([np.zeros((1, N_a_h)), np.tile(Hv[:, np.newaxis], (1, N_a_h))])
 sHv0 = np.vstack([np.zeros((1, N_a_h)), np.tile(sHv[:, np.newaxis], (1, N_a_h))])
 
+varpi_v0 = np.vstack([np.zeros((1, N_a_h)), np.tile(varpi_v[:, np.newaxis], (1, N_a_h))])
+svarpi_v0 = np.vstack([np.zeros((1, N_a_h)), np.tile(svarpi_v[:, np.newaxis], (1, N_a_h))])
+
 H_integrand0 = np.vstack([np.zeros((1, N_a_h)), (sigma[np.newaxis, :] / v[:, np.newaxis]) * f(v[:, np.newaxis], sigma[np.newaxis, :])])
 
 # Integrate over v
@@ -94,6 +100,7 @@ tau_x = np.trapezoid(tauv_x0 * f0, x=v0, axis=0)
 tau_y = np.trapezoid(tauv_y0 * f0, x=v0, axis=0)
 tau_z = np.trapezoid(tauv_z0 * f0, x=v0, axis=0)
 H = np.trapezoid(Hv0 * H_integrand0, x=v0, axis=0)
+varpi = np.trapezoid(varpi_v0 * f0, x=v0, axis=0)
 K = - (1-e**2)/(2*e) + np.sqrt(1-e**2)/(2*e) * tau_z/P
 Q_x = - (mu / (2*sigma)) * F_x / P
 Q_y = - (mu / (2*sigma)) * F_y / P
@@ -107,6 +114,7 @@ stau_x_integrand = stauv_x0 * f0
 stau_y_integrand = stauv_y0 * f0
 stau_z_integrand = stauv_z0 * f0
 sH_integrand = sHv0 * H_integrand0
+svarpi_integrand = svarpi_v0 * f0
 
 weights = np.empty_like(v0)
 weights[0] = (v0[1] - v0[0]) / 2
@@ -121,6 +129,7 @@ stau_x = np.sqrt(np.sum((weights[:, np.newaxis] * stau_x_integrand)**2, axis=0))
 stau_y = np.sqrt(np.sum((weights[:, np.newaxis] * stau_y_integrand)**2, axis=0))
 stau_z = np.sqrt(np.sum((weights[:, np.newaxis] * stau_z_integrand)**2, axis=0))
 sH = np.sqrt(np.sum((weights[:, np.newaxis] * sH_integrand)**2, axis=0))
+svarpi = np.sqrt(np.sum((weights[:, np.newaxis] * svarpi_integrand)**2, axis=0))
 sK = np.sqrt(1-e**2)/(2*e) * np.abs(tau_z/P) * np.sqrt((stau_z/tau_z)**2 + (sP/P)**2)
 sQ_x = (mu / (2*sigma)) * np.abs(F_x / P) * np.sqrt((sF_x/F_x)**2 + (sP/P)**2)
 sQ_y = (mu / (2*sigma)) * np.abs(F_y / P) * np.sqrt((sF_y/F_y)**2 + (sP/P)**2)
@@ -232,5 +241,15 @@ ax7.set_xscale('log')
 ax7.set_xlabel(r'$v$')
 ax7.set_ylabel(r'$N_{\mathrm{resolved}}$')
 ax7.grid()
+
+fig8, ax8 = plt.subplots()
+
+ax8.plot(1/a_h, varpi)
+ax8.fill_between(1/a_h, varpi-svarpi, varpi+svarpi, alpha=0.3)
+
+ax8.set_xscale('log')
+ax8.set_xlabel(r'$a/a_h$')
+ax8.set_ylabel(r'$\dot\varpi$ [$\rho\sqrt{Ga^3/M}$]')
+ax8.grid()
 
 plt.show()

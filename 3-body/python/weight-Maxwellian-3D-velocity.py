@@ -49,8 +49,8 @@ def read_binary(filename):
             v_inf = struct.unpack('d', f.read(8))[0]
             n_esc = struct.unpack('i', f.read(4))[0]
             if n_esc > 0:
-                raw = np.frombuffer(f.read(n_esc * 88),
-                                    dtype=np.float64).reshape(n_esc, 11)
+                raw = np.frombuffer(f.read(n_esc * 96),
+                                    dtype=np.float64).reshape(n_esc, 12)
                 bins.append(dict(
                     v_inf=v_inf, n_esc=n_esc,
                     v_in=raw[:, :3].copy(),
@@ -58,13 +58,14 @@ def read_binary(filename):
                     dv=raw[:, 4:7].copy(),
                     dL=raw[:, 7:10].copy(),
                     dT=raw[:, 10].copy(),
+                    delta_varpi=raw[:, 11].copy(),
                 ))
             else:
                 bins.append(dict(
                     v_inf=v_inf, n_esc=0,
                     v_in=np.empty((0, 3)), dE=np.empty(0),
                     dv=np.empty((0, 3)), dL=np.empty((0, 3)),
-                    dT=np.empty(0),
+                    dT=np.empty(0), delta_varpi=np.empty(0),
                 ))
 
     meta = dict(q=q, e=e, rp_max=rp_max, r_sphere=r_sphere, n_per_v=n_per_v)
@@ -77,7 +78,7 @@ def read_harmonics(filename):
     Returns (meta, harm_bins) where meta includes l_max, and each bin has
     v_inf, n_esc, M (7 x n_sh first moments), S (7 x n_sh second moments).
     """
-    N_Q = 7
+    N_Q = 8
     harm_bins = []
     with open(filename, 'rb') as f:
         q        = struct.unpack('d', f.read(8))[0]
@@ -177,6 +178,7 @@ def reweight(meta, bins, V0, sigma, rho=1.0):
     acc_E = 0.0;    var_E = 0.0
     acc_F = np.zeros(3);  var_F = np.zeros(3)
     acc_L = np.zeros(3);  var_L = np.zeros(3)
+    acc_varpi = 0.0;  var_varpi = 0.0
 
     for j, b in enumerate(bins):
         Nj = b['n_esc']
@@ -202,12 +204,18 @@ def reweight(meta, bins, V0, sigma, rho=1.0):
         acc_L += A_j * np.mean(wL, axis=0)
         var_L += A_j**2 * np.var(wL, axis=0) / Nj
 
+        wV = f3d * b['delta_varpi']
+        acc_varpi += A_j * np.mean(wV)
+        var_varpi += A_j**2 * np.var(wV) / Nj
+
     P    = -rho * acc_E
     sP   =  rho * np.sqrt(max(var_E, 0))
     F    = -rho * acc_F
     sF   =  rho * np.sqrt(np.maximum(var_F, 0))
     tau  = -rho * acc_L
     stau =  rho * np.sqrt(np.maximum(var_L, 0))
+    varpi_rate  = rho * acc_varpi
+    svarpi_rate = rho * np.sqrt(max(var_varpi, 0))
 
     H  = -2 * sigma * P / (mu * rho)
     sH =  2 * sigma * sP / (mu * rho)
@@ -237,6 +245,7 @@ def reweight(meta, bins, V0, sigma, rho=1.0):
     return dict(
         P=P, sP=sP, F=F, sF=sF, tau=tau, stau=stau,
         H=H, sH=sH, K=K, sK=sK, Q_x=Q_x, sQ_x=sQ_x, Q_y=Q_y, sQ_y=sQ_y,
+        varpi=varpi_rate, svarpi=svarpi_rate,
     )
 
 # ── Real spherical harmonics (matches C++ compute_real_Ylm exactly) ──────────
@@ -326,6 +335,7 @@ def reweight_from_harmonics(meta, harm_bins, V0, sigma, rho=1.0):
     acc_E = 0.0;    var_E = 0.0
     acc_F = np.zeros(3);  var_F = np.zeros(3)
     acc_L = np.zeros(3);  var_L = np.zeros(3)
+    acc_varpi = 0.0;  var_varpi = 0.0
 
     for j, b in enumerate(harm_bins):
         Nj = b['n_esc']
@@ -354,11 +364,11 @@ def reweight_from_harmonics(meta, harm_bins, V0, sigma, rho=1.0):
         w2 = s2[l_idx] * Ylm_V0
 
         fourpi = 4 * np.pi
-        M  = b['M']    # (7, n_sh)
-        Sq = b['S']    # (7, n_sh)
+        M  = b['M']    # (8, n_sh)
+        Sq = b['S']    # (8, n_sh)
 
-        mean_X  = G1 * fourpi * (M  @ w1)    # (7,)
-        mean_X2 = G2 * fourpi * (Sq @ w2)    # (7,)
+        mean_X  = G1 * fourpi * (M  @ w1)    # (8,)
+        mean_X2 = G2 * fourpi * (Sq @ w2)    # (8,)
         var_X   = mean_X2 - mean_X**2
 
         acc_E += A_j * mean_X[0]
@@ -370,12 +380,17 @@ def reweight_from_harmonics(meta, harm_bins, V0, sigma, rho=1.0):
         acc_L += A_j * mean_X[4:7]
         var_L += A_j**2 * np.maximum(var_X[4:7], 0) / Nj
 
+        acc_varpi += A_j * mean_X[7]
+        var_varpi += A_j**2 * max(var_X[7], 0) / Nj
+
     P    = -rho * acc_E
     sP   =  rho * np.sqrt(max(var_E, 0))
     F    = -rho * acc_F
     sF   =  rho * np.sqrt(np.maximum(var_F, 0))
     tau  = -rho * acc_L
     stau =  rho * np.sqrt(np.maximum(var_L, 0))
+    varpi_rate  = rho * acc_varpi
+    svarpi_rate = rho * np.sqrt(max(var_varpi, 0))
 
     H  = -2 * sigma * P / (mu * rho)
     sH =  2 * sigma * sP / (mu * rho)
@@ -405,6 +420,7 @@ def reweight_from_harmonics(meta, harm_bins, V0, sigma, rho=1.0):
     return dict(
         P=P, sP=sP, F=F, sF=sF, tau=tau, stau=stau,
         H=H, sH=sH, K=K, sK=sK, Q_x=Q_x, sQ_x=sQ_x, Q_y=Q_y, sQ_y=sQ_y,
+        varpi=varpi_rate, svarpi=svarpi_rate,
     )
 
 # ── Isotropic check via original text-file method ────────────────────────────
@@ -421,6 +437,7 @@ def isotropic_from_text(text_file, q, e, rp_max, rho=1.0):
     DeltaLx = data[11]; sDeltaLx = data[12]
     DeltaLy = data[13]; sDeltaLy = data[14]
     DeltaLz = data[15]; sDeltaLz = data[16]
+    Delta_varpi = data[17]; sDelta_varpi = data[18]
 
     def bm(vv):
         return rp_max * np.sqrt(1 + 2 / (vv**2 * rp_max))
@@ -448,6 +465,8 @@ def isotropic_from_text(text_file, q, e, rp_max, rho=1.0):
     sTvz = np.pi * bm(v)**2 * rho * v * sDeltaLz
     Hv   = (2 * np.pi * v**2 * bm(v)**2) * DeltaE / mu
     sHv  = (2 * np.pi * v**2 * bm(v)**2) * sDeltaE / mu
+    Wv   = np.pi * bm(v)**2 * rho * v * Delta_varpi
+    sWv  = np.pi * bm(v)**2 * rho * v * sDelta_varpi
 
     v0 = np.hstack([0, v])
     f0 = np.vstack([np.zeros((1, N_ah)),
@@ -466,6 +485,7 @@ def isotropic_from_text(text_file, q, e, rp_max, rho=1.0):
     ty  = _trapz(_tile(Tvy) * f0, x=v0, axis=0)
     tz  = _trapz(_tile(Tvz) * f0, x=v0, axis=0)
     H   = _trapz(_tile(Hv)  * H_int0, x=v0, axis=0)
+    W   = _trapz(_tile(Wv)  * f0, x=v0, axis=0)
 
     weights = np.empty_like(v0)
     weights[0]    = (v0[1] - v0[0]) / 2
@@ -484,6 +504,7 @@ def isotropic_from_text(text_file, q, e, rp_max, rho=1.0):
     sty = _unc(sTvy, f0)
     stz = _unc(sTvz, f0)
     sH  = _unc(sHv,  H_int0)
+    sW  = _unc(sWv,  f0)
 
     K  = -(1 - e**2) / (2 * e) + np.sqrt(1 - e**2) / (2 * e) * tz / P
     sK = np.sqrt(1 - e**2) / (2 * e) * np.abs(tz / P) * np.sqrt((stz / tz)**2 + (sP / P)**2)
@@ -491,7 +512,8 @@ def isotropic_from_text(text_file, q, e, rp_max, rho=1.0):
     return dict(a_h=a_h, sigma=sigma,
                 P=P, sP=sP, H=H, sH=sH, K=K, sK=sK,
                 F=np.array([Fx, Fy, Fz]), sF=np.array([sFx, sFy, sFz]),
-                tau=np.array([tx, ty, tz]), stau=np.array([stx, sty, stz]))
+                tau=np.array([tx, ty, tz]), stau=np.array([stx, sty, stz]),
+                varpi=W, svarpi=sW)
 
 # ── Chandrasekhar dynamical friction ─────────────────────────────────────────
 
@@ -652,30 +674,35 @@ if __name__ == '__main__':
                 results[key] = results[(first_dir, 0)]
                 continue
 
-            H_arr    = np.empty(N_ah)
-            sH_arr   = np.empty(N_ah)
-            K_arr    = np.empty(N_ah)
-            sK_arr   = np.empty(N_ah)
-            F_arr    = np.empty((N_ah, 3))
-            sF_arr   = np.empty((N_ah, 3))
-            tau_arr  = np.empty((N_ah, 3))
-            stau_arr = np.empty((N_ah, 3))
+            H_arr      = np.empty(N_ah)
+            sH_arr     = np.empty(N_ah)
+            K_arr      = np.empty(N_ah)
+            sK_arr     = np.empty(N_ah)
+            F_arr      = np.empty((N_ah, 3))
+            sF_arr     = np.empty((N_ah, 3))
+            tau_arr    = np.empty((N_ah, 3))
+            stau_arr   = np.empty((N_ah, 3))
+            varpi_arr  = np.empty(N_ah)
+            svarpi_arr = np.empty(N_ah)
 
             for i, sig in enumerate(sigma):
                 V0 = V0r * sig * dir_hat
                 r = _reweight(V0, sig)
-                H_arr[i]    = r['H']
-                sH_arr[i]   = r['sH']
-                K_arr[i]    = r['K']
-                sK_arr[i]   = r['sK']
-                F_arr[i]    = r['F']
-                sF_arr[i]   = r['sF']
-                tau_arr[i]  = r['tau']
-                stau_arr[i] = r['stau']
+                H_arr[i]      = r['H']
+                sH_arr[i]     = r['sH']
+                K_arr[i]      = r['K']
+                sK_arr[i]     = r['sK']
+                F_arr[i]      = r['F']
+                sF_arr[i]     = r['sF']
+                tau_arr[i]    = r['tau']
+                stau_arr[i]   = r['stau']
+                varpi_arr[i]  = r['varpi']
+                svarpi_arr[i] = r['svarpi']
 
             results[key] = dict(
                 H=H_arr, sH=sH_arr, K=K_arr, sK=sK_arr,
                 F=F_arr, sF=sF_arr, tau=tau_arr, stau=stau_arr,
+                varpi=varpi_arr, svarpi=svarpi_arr,
             )
             print(f"  Computed: V_0/sigma={V0r:+d}, dir={dir_label}")
 
@@ -717,6 +744,23 @@ if __name__ == '__main__':
     ax_K.legend(fontsize=7)
     ax_K.set_title(f'Eccentricity growth (q={q}, e={e_ecc})')
     fig_K.tight_layout()
+
+    # ── Plot varpi(a/a_h) ──
+    fig_varpi, ax_varpi = plt.subplots(figsize=(7, 5))
+    seen_zero = False
+    for (dir_label, V0r), res in results.items():
+        if V0r == 0:
+            if seen_zero: continue
+            seen_zero = True
+        ax_varpi.plot(1/a_h, res['varpi'], label=_label(V0r, dir_label))
+        ax_varpi.fill_between(1/a_h, res['varpi'] - res['svarpi'],
+                              res['varpi'] + res['svarpi'], alpha=0.08)
+    ax_varpi.set_xscale('log')
+    ax_varpi.set_xlabel(r'$a/a_h$')
+    ax_varpi.set_ylabel(r'$\dot\varpi$ [$\rho\sqrt{Ga^3/M}$]')
+    ax_varpi.legend(fontsize=7)
+    ax_varpi.set_title(f'Precession rate (q={q}, e={e_ecc})')
+    fig_varpi.tight_layout()
 
     # ── Plot signed F components: one figure per V_0 direction ──
     comp_names = ['x', 'y', 'z']

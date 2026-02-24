@@ -58,6 +58,7 @@ H_grid = np.zeros((len(e_values), len(q_values)))
 K_grid = np.zeros((len(e_values), len(q_values)))
 Qx_grid = np.zeros((len(e_values), len(q_values)))
 Qy_grid = np.zeros((len(e_values), len(q_values)))
+varpi_grid = np.zeros((len(e_values), len(q_values)))
 
 sP_grid = np.zeros((len(e_values), len(q_values)))
 sFx_grid = np.zeros((len(e_values), len(q_values)))
@@ -70,6 +71,7 @@ sH_grid = np.zeros((len(e_values), len(q_values)))
 sK_grid = np.zeros((len(e_values), len(q_values)))
 sQx_grid = np.zeros((len(e_values), len(q_values)))
 sQy_grid = np.zeros((len(e_values), len(q_values)))
+svarpi_grid = np.zeros((len(e_values), len(q_values)))
 
 ###################################################
 # Main loop over (q, e)
@@ -83,7 +85,7 @@ for q, e, filename in parsed_files:
     try:
         v, DeltaE, sDeltaE, DeltaT, sDeltaT, Deltavx, sDeltavx, Deltavy, sDeltavy, \
         Deltavz, sDeltavz, DeltaLx, sDeltaLx, DeltaLy, sDeltaLy, DeltaLz, sDeltaLz, \
-        Nresolved = np.loadtxt(os.path.join(data_dir, filename), unpack=True)
+        Delta_varpi, sDelta_varpi, Nresolved = np.loadtxt(os.path.join(data_dir, filename), unpack=True)
     except:
         print(f"File not found or unreadable: {filename}")
         Fx_grid[ie, iq] = np.nan
@@ -105,6 +107,7 @@ for q, e, filename in parsed_files:
     tauv_y = - np.pi * b_max(v)**2 * rho * v * DeltaLy
     tauv_z = - np.pi * b_max(v)**2 * rho * v * DeltaLz
     Hv = (2 * np.pi * v**2 * b_max(v)**2) * DeltaE / mu
+    varpi_v = np.pi * b_max(v)**2 * rho * v * Delta_varpi
 
     sPv = - np.pi * b_max(v)**2 * rho * v * sDeltaE
     sFv_x = - np.pi * b_max(v)**2 * rho * v * sDeltavx
@@ -114,6 +117,7 @@ for q, e, filename in parsed_files:
     stauv_y = - np.pi * b_max(v)**2 * rho * v * sDeltaLy
     stauv_z = - np.pi * b_max(v)**2 * rho * v * sDeltaLz
     sHv = (2 * np.pi * v**2 * b_max(v)**2) * sDeltaE / mu
+    svarpi_v = np.pi * b_max(v)**2 * rho * v * sDelta_varpi
 
     # Prepare integration arrays
     v0 = np.hstack([0, v])
@@ -127,6 +131,7 @@ for q, e, filename in parsed_files:
     tauv_y0 = np.vstack([np.zeros((1, N_a_h)), np.tile(tauv_y[:, np.newaxis], (1, N_a_h))])
     tauv_z0 = np.vstack([np.zeros((1, N_a_h)), np.tile(tauv_z[:, np.newaxis], (1, N_a_h))])
     Hv0 = np.vstack([np.zeros((1, N_a_h)), np.tile(Hv[:, np.newaxis], (1, N_a_h))])
+    varpi_v0 = np.vstack([np.zeros((1, N_a_h)), np.tile(varpi_v[:, np.newaxis], (1, N_a_h))])
     H_integrand0 = np.vstack([np.zeros((1, N_a_h)), (sigma[np.newaxis, :] / v[:, np.newaxis]) * f(v[:, np.newaxis], sigma[np.newaxis, :])])
 
     sPv0 = np.vstack([np.zeros((1, N_a_h)), np.tile(sPv[:, np.newaxis], (1, N_a_h))])
@@ -137,6 +142,7 @@ for q, e, filename in parsed_files:
     stauv_y0 = np.vstack([np.zeros((1, N_a_h)), np.tile(stauv_y[:, np.newaxis], (1, N_a_h))])
     stauv_z0 = np.vstack([np.zeros((1, N_a_h)), np.tile(stauv_z[:, np.newaxis], (1, N_a_h))])
     sHv0 = np.vstack([np.zeros((1, N_a_h)), np.tile(sHv[:, np.newaxis], (1, N_a_h))])
+    svarpi_v0 = np.vstack([np.zeros((1, N_a_h)), np.tile(svarpi_v[:, np.newaxis], (1, N_a_h))])
 
     # Integrations
     P = np.trapezoid(Pv0 * f0, x=v0, axis=0)
@@ -147,6 +153,7 @@ for q, e, filename in parsed_files:
     tau_y = np.trapezoid(tauv_y0 * f0, x=v0, axis=0)
     tau_z = np.trapezoid(tauv_z0 * f0, x=v0, axis=0)
     H = np.trapezoid(Hv0 * H_integrand0, x=v0, axis=0)
+    varpi_int = np.trapezoid(varpi_v0 * f0, x=v0, axis=0)
     if (e == 0):
         K = np.full_like(P, np.nan)
     else:
@@ -163,6 +170,7 @@ for q, e, filename in parsed_files:
     stau_y_integrand = stauv_y0 * f0
     stau_z_integrand = stauv_z0 * f0
     sH_integrand = sHv0 * H_integrand0
+    svarpi_integrand = svarpi_v0 * f0
 
     weights = np.empty_like(v0)
     weights[0] = (v0[1] - v0[0]) / 2
@@ -177,6 +185,7 @@ for q, e, filename in parsed_files:
     stau_y = np.sqrt(np.sum((weights[:, np.newaxis] * stau_y_integrand)**2, axis=0))
     stau_z = np.sqrt(np.sum((weights[:, np.newaxis] * stau_z_integrand)**2, axis=0))
     sH = np.sqrt(np.sum((weights[:, np.newaxis] * sH_integrand)**2, axis=0))
+    svarpi_int = np.sqrt(np.sum((weights[:, np.newaxis] * svarpi_integrand)**2, axis=0))
     if (e == 0):
         sK = np.full_like(K, np.nan)
     else:
@@ -196,6 +205,7 @@ for q, e, filename in parsed_files:
     K_val = np.interp(1/a_over_a_h_target, a_h[::-1], K[::-1])
     Qx_val = np.interp(1/a_over_a_h_target, a_h[::-1], Q_x[::-1])
     Qy_val = np.interp(1/a_over_a_h_target, a_h[::-1], Q_y[::-1])
+    varpi_val = np.interp(1/a_over_a_h_target, a_h[::-1], varpi_int[::-1])
 
     sP_val = np.interp(1/a_over_a_h_target, a_h[::-1], sP[::-1])
     sFx_val = np.interp(1/a_over_a_h_target, a_h[::-1], sF_x[::-1])
@@ -208,6 +218,7 @@ for q, e, filename in parsed_files:
     sK_val = np.interp(1/a_over_a_h_target, a_h[::-1], sK[::-1])
     sQx_val = np.interp(1/a_over_a_h_target, a_h[::-1], sQ_x[::-1])
     sQy_val = np.interp(1/a_over_a_h_target, a_h[::-1], sQ_y[::-1])
+    svarpi_val = np.interp(1/a_over_a_h_target, a_h[::-1], svarpi_int[::-1])
 
     P_grid[ie, iq] = P_val
     Fx_grid[ie, iq] = Fx_val
@@ -220,6 +231,7 @@ for q, e, filename in parsed_files:
     K_grid[ie, iq] = K_val
     Qx_grid[ie, iq] = Qx_val
     Qy_grid[ie, iq] = Qy_val
+    varpi_grid[ie, iq] = varpi_val
 
     sP_grid[ie, iq] = sP_val
     sFx_grid[ie, iq] = sFx_val
@@ -232,6 +244,7 @@ for q, e, filename in parsed_files:
     sK_grid[ie, iq] = sK_val
     sQx_grid[ie, iq] = sQx_val
     sQy_grid[ie, iq] = sQy_val
+    svarpi_grid[ie, iq] = svarpi_val
 
 ###################################################
 # Plotting
@@ -258,7 +271,7 @@ axes[1].grid(True)
 axes[1].set_xlim(-0.5, 1.1)
 axes[1].set_ylim(-0.1, 1)
 
-fig2, ax2 = plt.subplots(1, 2, figsize=(14, 6))
+fig2, ax2 = plt.subplots(1, 3, figsize=(18, 6))
 
 for ie in range(len(e_values)):
     ax2[0].plot(Q[ie], H_grid[ie], label=f'e={E[ie,0]}')
@@ -275,6 +288,14 @@ ax2[1].set_xscale('log')
 ax2[1].set_xlabel(r'$q$')
 ax2[1].set_ylabel(r'$K$')
 ax2[1].legend()
+
+for ie in range(len(e_values)):
+    ax2[2].plot(Q[ie], varpi_grid[ie], label=f'e={E[ie,0]}')
+    ax2[2].fill_between(Q[ie], varpi_grid[ie]-svarpi_grid[ie], varpi_grid[ie]+svarpi_grid[ie], alpha=0.3)
+ax2[2].set_xscale('log')
+ax2[2].set_xlabel(r'$q$')
+ax2[2].set_ylabel(r'$\dot\varpi$ [$\rho\sqrt{Ga^3/M}$]')
+ax2[2].legend()
 
 plt.tight_layout()
 plt.show()
