@@ -214,8 +214,8 @@ def reweight(meta, bins, V0, sigma, rho=1.0):
     sF   =  rho * np.sqrt(np.maximum(var_F, 0))
     tau  = -rho * acc_L
     stau =  rho * np.sqrt(np.maximum(var_L, 0))
-    varpi_rate  = rho * acc_varpi
-    svarpi_rate = rho * np.sqrt(max(var_varpi, 0))
+    varpi_dot  = rho * acc_varpi
+    svarpi_dot = rho * np.sqrt(max(var_varpi, 0))
 
     H  = -2 * sigma * P / (mu * rho)
     sH =  2 * sigma * sP / (mu * rho)
@@ -245,7 +245,7 @@ def reweight(meta, bins, V0, sigma, rho=1.0):
     return dict(
         P=P, sP=sP, F=F, sF=sF, tau=tau, stau=stau,
         H=H, sH=sH, K=K, sK=sK, Q_x=Q_x, sQ_x=sQ_x, Q_y=Q_y, sQ_y=sQ_y,
-        varpi=varpi_rate, svarpi=svarpi_rate,
+        varpi_dot=varpi_dot, svarpi_dot=svarpi_dot,
     )
 
 # ── Real spherical harmonics (matches C++ compute_real_Ylm exactly) ──────────
@@ -389,8 +389,8 @@ def reweight_from_harmonics(meta, harm_bins, V0, sigma, rho=1.0):
     sF   =  rho * np.sqrt(np.maximum(var_F, 0))
     tau  = -rho * acc_L
     stau =  rho * np.sqrt(np.maximum(var_L, 0))
-    varpi_rate  = rho * acc_varpi
-    svarpi_rate = rho * np.sqrt(max(var_varpi, 0))
+    varpi_dot  = rho * acc_varpi
+    svarpi_dot = rho * np.sqrt(max(var_varpi, 0))
 
     H  = -2 * sigma * P / (mu * rho)
     sH =  2 * sigma * sP / (mu * rho)
@@ -420,7 +420,7 @@ def reweight_from_harmonics(meta, harm_bins, V0, sigma, rho=1.0):
     return dict(
         P=P, sP=sP, F=F, sF=sF, tau=tau, stau=stau,
         H=H, sH=sH, K=K, sK=sK, Q_x=Q_x, sQ_x=sQ_x, Q_y=Q_y, sQ_y=sQ_y,
-        varpi=varpi_rate, svarpi=svarpi_rate,
+        varpi_dot=varpi_dot, svarpi_dot=svarpi_dot,
     )
 
 # ── Isotropic check via original text-file method ────────────────────────────
@@ -465,8 +465,8 @@ def isotropic_from_text(text_file, q, e, rp_max, rho=1.0):
     sTvz = np.pi * bm(v)**2 * rho * v * sDeltaLz
     Hv   = (2 * np.pi * v**2 * bm(v)**2) * DeltaE / mu
     sHv  = (2 * np.pi * v**2 * bm(v)**2) * sDeltaE / mu
-    Wv   = np.pi * bm(v)**2 * rho * v * Delta_varpi
-    sWv  = np.pi * bm(v)**2 * rho * v * sDelta_varpi
+    varpi_dot_v  = np.pi * bm(v)**2 * rho * v * Delta_varpi
+    svarpi_dot_v = np.pi * bm(v)**2 * rho * v * sDelta_varpi
 
     v0 = np.hstack([0, v])
     f0 = np.vstack([np.zeros((1, N_ah)),
@@ -485,7 +485,7 @@ def isotropic_from_text(text_file, q, e, rp_max, rho=1.0):
     ty  = _trapz(_tile(Tvy) * f0, x=v0, axis=0)
     tz  = _trapz(_tile(Tvz) * f0, x=v0, axis=0)
     H   = _trapz(_tile(Hv)  * H_int0, x=v0, axis=0)
-    W   = _trapz(_tile(Wv)  * f0, x=v0, axis=0)
+    varpi_dot_int = _trapz(_tile(varpi_dot_v) * f0, x=v0, axis=0)
 
     weights = np.empty_like(v0)
     weights[0]    = (v0[1] - v0[0]) / 2
@@ -504,7 +504,7 @@ def isotropic_from_text(text_file, q, e, rp_max, rho=1.0):
     sty = _unc(sTvy, f0)
     stz = _unc(sTvz, f0)
     sH  = _unc(sHv,  H_int0)
-    sW  = _unc(sWv,  f0)
+    svarpi_dot_int = _unc(svarpi_dot_v, f0)
 
     K  = -(1 - e**2) / (2 * e) + np.sqrt(1 - e**2) / (2 * e) * tz / P
     sK = np.sqrt(1 - e**2) / (2 * e) * np.abs(tz / P) * np.sqrt((stz / tz)**2 + (sP / P)**2)
@@ -513,7 +513,7 @@ def isotropic_from_text(text_file, q, e, rp_max, rho=1.0):
                 P=P, sP=sP, H=H, sH=sH, K=K, sK=sK,
                 F=np.array([Fx, Fy, Fz]), sF=np.array([sFx, sFy, sFz]),
                 tau=np.array([tx, ty, tz]), stau=np.array([stx, sty, stz]),
-                varpi=W, svarpi=sW)
+                varpi_dot=varpi_dot_int, svarpi_dot=svarpi_dot_int)
 
 # ── Chandrasekhar dynamical friction ─────────────────────────────────────────
 
@@ -682,8 +682,8 @@ if __name__ == '__main__':
             sF_arr     = np.empty((N_ah, 3))
             tau_arr    = np.empty((N_ah, 3))
             stau_arr   = np.empty((N_ah, 3))
-            varpi_arr  = np.empty(N_ah)
-            svarpi_arr = np.empty(N_ah)
+            varpi_dot_arr  = np.empty(N_ah)
+            svarpi_dot_arr = np.empty(N_ah)
 
             for i, sig in enumerate(sigma):
                 V0 = V0r * sig * dir_hat
@@ -696,13 +696,13 @@ if __name__ == '__main__':
                 sF_arr[i]     = r['sF']
                 tau_arr[i]    = r['tau']
                 stau_arr[i]   = r['stau']
-                varpi_arr[i]  = r['varpi']
-                svarpi_arr[i] = r['svarpi']
+                varpi_dot_arr[i]  = r['varpi_dot']
+                svarpi_dot_arr[i] = r['svarpi_dot']
 
             results[key] = dict(
                 H=H_arr, sH=sH_arr, K=K_arr, sK=sK_arr,
                 F=F_arr, sF=sF_arr, tau=tau_arr, stau=stau_arr,
-                varpi=varpi_arr, svarpi=svarpi_arr,
+                varpi_dot=varpi_dot_arr, svarpi_dot=svarpi_dot_arr,
             )
             print(f"  Computed: V_0/sigma={V0r:+d}, dir={dir_label}")
 
@@ -745,16 +745,16 @@ if __name__ == '__main__':
     ax_K.set_title(f'Eccentricity growth (q={q}, e={e_ecc})')
     fig_K.tight_layout()
 
-    # ── Plot varpi(a/a_h) ──
+    # ── Plot varpi_dot(a/a_h) ──
     fig_varpi, ax_varpi = plt.subplots(figsize=(7, 5))
     seen_zero = False
     for (dir_label, V0r), res in results.items():
         if V0r == 0:
             if seen_zero: continue
             seen_zero = True
-        ax_varpi.plot(1/a_h, res['varpi'], label=_label(V0r, dir_label))
-        ax_varpi.fill_between(1/a_h, res['varpi'] - res['svarpi'],
-                              res['varpi'] + res['svarpi'], alpha=0.08)
+        ax_varpi.plot(1/a_h, res['varpi_dot'], label=_label(V0r, dir_label))
+        ax_varpi.fill_between(1/a_h, res['varpi_dot'] - res['svarpi_dot'],
+                              res['varpi_dot'] + res['svarpi_dot'], alpha=0.08)
     ax_varpi.set_xscale('log')
     ax_varpi.set_xlabel(r'$a/a_h$')
     ax_varpi.set_ylabel(r'$\dot\varpi$ [$\rho\sqrt{Ga^3/M}$]')

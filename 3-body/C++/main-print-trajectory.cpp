@@ -21,6 +21,7 @@
 // Units: G = 1, M = 1 (total binary mass), a = 1 (semi-major axis). The orbital period is then 2π.
 
 double r_sphere = 50.0;
+double eps_soft = 1e-5;
 
 // Calculate the eccentric anomaly E as a function of the mean anomaly M_anom
 double EccentricAnomaly(double M_anom, double e, double tol = 1e-15, int max_iter = 100)
@@ -349,11 +350,13 @@ std::function<Vec3(const Vec3 &, double)> makeBinaryForce(const BinaryOrbit & or
 
         Vec3 dr1 = r - r1;
         Vec3 dr2 = r - r2;
-        double d1 = norm(dr1);
-        double d2 = norm(dr2);
+        double eps2 = eps_soft * eps_soft;
+        double d1_sq = dr1*dr1 + eps2;
+        double d2_sq = dr2*dr2 + eps2;
+        double d1_32 = d1_sq * std::sqrt(d1_sq);
+        double d2_32 = d2_sq * std::sqrt(d2_sq);
 
-        if (d1 > 1e-15) F = F + (-m1/(d1*d1*d1)) * dr1;
-        if (d2 > 1e-15) F = F + (-m2/(d2*d2*d2)) * dr2;
+        F = F + (-m1/d1_32) * dr1 + (-m2/d2_32) * dr2;
 
         return F;
     };
