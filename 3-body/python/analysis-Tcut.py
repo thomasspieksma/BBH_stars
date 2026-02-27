@@ -55,6 +55,7 @@ H_vals  = np.zeros(N)
 K_vals  = np.zeros(N)
 Qx_vals = np.zeros(N)
 Qy_vals = np.zeros(N)
+tildeQ_vals = np.zeros(N)
 
 sP_vals  = np.zeros(N)
 sFx_vals = np.zeros(N)
@@ -67,6 +68,7 @@ sH_vals  = np.zeros(N)
 sK_vals  = np.zeros(N)
 sQx_vals = np.zeros(N)
 sQy_vals = np.zeros(N)
+stildeQ_vals = np.zeros(N)
 
 ###################################################
 # Functions (as in your script)
@@ -88,13 +90,13 @@ for i, (Tcut, filename) in enumerate(parsed_files):
     try:
         v, DeltaE, sDeltaE, DeltaT, sDeltaT, Deltavx, sDeltavx, Deltavy, sDeltavy, \
         Deltavz, sDeltavz, DeltaLx, sDeltaLx, DeltaLy, sDeltaLy, DeltaLz, sDeltaLz, \
-        Nresolved = np.loadtxt(fullpath, unpack=True)
+        Delta_varpi, sDelta_varpi, Nresolved = np.loadtxt(fullpath, unpack=True)
     except:
         print("File unreadable:", filename)
         for arr in [P_vals, Fx_vals, Fy_vals, Fz_vals, taux_vals, tauy_vals, tauz_vals,
-                    H_vals, K_vals, Qx_vals, Qy_vals,
+                    H_vals, K_vals, Qx_vals, Qy_vals, tildeQ_vals,
                     sP_vals, sFx_vals, sFy_vals, sFz_vals, staux_vals, stauy_vals, stauz_vals,
-                    sH_vals, sK_vals, sQx_vals, sQy_vals]:
+                    sH_vals, sK_vals, sQx_vals, sQy_vals, stildeQ_vals]:
             arr[i] = np.nan
         continue
 
@@ -114,6 +116,7 @@ for i, (Tcut, filename) in enumerate(parsed_files):
     tauv_y = - np.pi * b_max(v)**2 * rho * v * DeltaLy
     tauv_z = - np.pi * b_max(v)**2 * rho * v * DeltaLz
     Hv = (2 * np.pi * v**2 * b_max(v)**2) * DeltaE / mu
+    varpi_dot_v = np.pi * b_max(v)**2 * rho * v * Delta_varpi
 
     # Uncertainties
     sPv = - np.pi * b_max(v)**2 * rho * v * sDeltaE
@@ -124,6 +127,7 @@ for i, (Tcut, filename) in enumerate(parsed_files):
     stauv_y = - np.pi * b_max(v)**2 * rho * v * sDeltaLy
     stauv_z = - np.pi * b_max(v)**2 * rho * v * sDeltaLz
     sHv = (2 * np.pi * v**2 * b_max(v)**2) * sDeltaE / mu
+    svarpi_dot_v = np.pi * b_max(v)**2 * rho * v * sDelta_varpi
 
     # Build v0 arrays (same as your script)
     v0 = np.hstack([0, v])
@@ -140,6 +144,7 @@ for i, (Tcut, filename) in enumerate(parsed_files):
     tauv_y0 = np.vstack([np.zeros((1, N_a_h)), np.tile(tauv_y[:, np.newaxis], (1, N_a_h))])
     tauv_z0 = np.vstack([np.zeros((1, N_a_h)), np.tile(tauv_z[:, np.newaxis], (1, N_a_h))])
     Hv0 = np.vstack([np.zeros((1, N_a_h)), np.tile(Hv[:, np.newaxis], (1, N_a_h))])
+    varpi_dot_v0 = np.vstack([np.zeros((1, N_a_h)), np.tile(varpi_dot_v[:, np.newaxis], (1, N_a_h))])
 
     H_integrand0 = np.vstack([np.zeros((1, N_a_h)),
                               (sigma[np.newaxis, :] / v[:, np.newaxis]) *
@@ -154,6 +159,7 @@ for i, (Tcut, filename) in enumerate(parsed_files):
     stauv_y0 = np.vstack([np.zeros((1, N_a_h)), np.tile(stauv_y[:, np.newaxis], (1, N_a_h))])
     stauv_z0 = np.vstack([np.zeros((1, N_a_h)), np.tile(stauv_z[:, np.newaxis], (1, N_a_h))])
     sHv0 = np.vstack([np.zeros((1, N_a_h)), np.tile(sHv[:, np.newaxis], (1, N_a_h))])
+    svarpi_dot_v0 = np.vstack([np.zeros((1, N_a_h)), np.tile(svarpi_dot_v[:, np.newaxis], (1, N_a_h))])
 
     ###################################################
     # Integrations
@@ -166,6 +172,7 @@ for i, (Tcut, filename) in enumerate(parsed_files):
     tau_y = np.trapz(tauv_y0 * f0, x=v0, axis=0)
     tau_z = np.trapz(tauv_z0 * f0, x=v0, axis=0)
     H = np.trapz(Hv0 * H_integrand0, x=v0, axis=0)
+    varpi_dot = np.trapz(varpi_dot_v0 * f0, x=v0, axis=0)
 
     # K(a_h)
     if e_fixed == 0:
@@ -176,6 +183,7 @@ for i, (Tcut, filename) in enumerate(parsed_files):
     # Q(a_h)
     Q_x = -(mu / (2*sigma)) * F_x / P
     Q_y = -(mu / (2*sigma)) * F_y / P
+    tildeQ = -(mu / 2) * varpi_dot / P
 
     ###################################################
     # Uncertainty propagation
@@ -193,6 +201,7 @@ for i, (Tcut, filename) in enumerate(parsed_files):
     stau_y = np.sqrt(np.sum((weights[:,None] * (stauv_y0*f0))**2, axis=0))
     stau_z = np.sqrt(np.sum((weights[:,None] * (stauv_z0*f0))**2, axis=0))
     sH = np.sqrt(np.sum((weights[:,None] * (sHv0 * H_integrand0))**2, axis=0))
+    svarpi_dot = np.sqrt(np.sum((weights[:,None] * (svarpi_dot_v0*f0))**2, axis=0))
 
     if e_fixed == 0:
         sK = np.full_like(K, np.nan)
@@ -201,6 +210,7 @@ for i, (Tcut, filename) in enumerate(parsed_files):
 
     sQ_x = (mu / (2*sigma)) * np.abs(F_x / P) * np.sqrt((sF_x/F_x)**2 + (sP/P)**2)
     sQ_y = (mu / (2*sigma)) * np.abs(F_y / P) * np.sqrt((sF_y/F_y)**2 + (sP/P)**2)
+    stildeQ = -(mu / 2) * (varpi_dot / P) * np.sqrt((svarpi_dot/varpi_dot)**2 + (sP/P)**2)
 
     ###################################################
     # Interpolate all quantities at chosen a_h
@@ -218,6 +228,7 @@ for i, (Tcut, filename) in enumerate(parsed_files):
     K_vals[i]  = np.interp(x, a_h[::-1], K[::-1])
     Qx_vals[i] = np.interp(x, a_h[::-1], Q_x[::-1])
     Qy_vals[i] = np.interp(x, a_h[::-1], Q_y[::-1])
+    tildeQ_vals[i] = np.interp(x, a_h[::-1], tildeQ[::-1])
 
     sP_vals[i]  = np.interp(x, a_h[::-1], sP[::-1])
     sFx_vals[i] = np.interp(x, a_h[::-1], sF_x[::-1])
@@ -230,6 +241,7 @@ for i, (Tcut, filename) in enumerate(parsed_files):
     sK_vals[i]  = np.interp(x, a_h[::-1], sK[::-1])
     sQx_vals[i] = np.interp(x, a_h[::-1], sQ_x[::-1])
     sQy_vals[i] = np.interp(x, a_h[::-1], sQ_y[::-1])
+    stildeQ_vals[i] = np.interp(x, a_h[::-1], stildeQ[::-1])
 
 
 ###################################################
@@ -266,5 +278,15 @@ ax3.set_xscale("log")
 ax3.set_xlabel(r"$T_{\rm cut}$")
 ax3.set_ylabel(r"$F$ [$G\rho a$]")
 ax3.set_title(fr"$F$ for q={q_fixed}, e={e_fixed}, and $a/a_h=${a_over_a_h_target}")
+
+fig4, ax4 = plt.subplots()
+
+ax4.plot(Tcuts, tildeQ_vals)
+ax4.fill_between(Tcuts, tildeQ_vals - stildeQ_vals, tildeQ_vals + stildeQ_vals, alpha=0.3)
+
+ax4.set_xscale("log")
+ax4.set_xlabel(r"$T_{\rm cut}$")
+ax4.set_ylabel(r"$\tilde Q$")
+ax4.set_title(fr"$\tilde Q$ for q={q_fixed}, e={e_fixed}, and $a/a_h=${a_over_a_h_target}")
 
 plt.show()

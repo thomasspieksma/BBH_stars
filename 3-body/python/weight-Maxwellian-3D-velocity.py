@@ -242,10 +242,17 @@ def reweight(meta, bins, V0, sigma, rho=1.0):
     Q_x, sQ_x = _Q(F[0], sF[0])
     Q_y, sQ_y = _Q(F[1], sF[1])
 
+    if abs(P) > 0 and abs(varpi_dot) > 1e-300:
+        tildeQ = -(mu / 2) * varpi_dot / P
+        stildeQ = (mu / 2) * _safe_ratio_err(varpi_dot, svarpi_dot, P, sP)
+    else:
+        tildeQ = np.nan; stildeQ = np.nan
+
     return dict(
         P=P, sP=sP, F=F, sF=sF, tau=tau, stau=stau,
         H=H, sH=sH, K=K, sK=sK, Q_x=Q_x, sQ_x=sQ_x, Q_y=Q_y, sQ_y=sQ_y,
         varpi_dot=varpi_dot, svarpi_dot=svarpi_dot,
+        tildeQ=tildeQ, stildeQ=stildeQ,
     )
 
 # ── Real spherical harmonics (matches C++ compute_real_Ylm exactly) ──────────
@@ -417,10 +424,17 @@ def reweight_from_harmonics(meta, harm_bins, V0, sigma, rho=1.0):
     Q_x, sQ_x = _Q(F[0], sF[0])
     Q_y, sQ_y = _Q(F[1], sF[1])
 
+    if abs(P) > 0 and abs(varpi_dot) > 1e-300:
+        tildeQ = -(mu / 2) * varpi_dot / P
+        stildeQ = (mu / 2) * _safe_ratio_err(varpi_dot, svarpi_dot, P, sP)
+    else:
+        tildeQ = np.nan; stildeQ = np.nan
+
     return dict(
         P=P, sP=sP, F=F, sF=sF, tau=tau, stau=stau,
         H=H, sH=sH, K=K, sK=sK, Q_x=Q_x, sQ_x=sQ_x, Q_y=Q_y, sQ_y=sQ_y,
         varpi_dot=varpi_dot, svarpi_dot=svarpi_dot,
+        tildeQ=tildeQ, stildeQ=stildeQ,
     )
 
 # ── Isotropic check via original text-file method ────────────────────────────
@@ -508,12 +522,15 @@ def isotropic_from_text(text_file, q, e, rp_max, rho=1.0):
 
     K  = -(1 - e**2) / (2 * e) + np.sqrt(1 - e**2) / (2 * e) * tz / P
     sK = np.sqrt(1 - e**2) / (2 * e) * np.abs(tz / P) * np.sqrt((stz / tz)**2 + (sP / P)**2)
+    tildeQ = -(mu / 2) * varpi_dot_int / P
+    stildeQ = -(mu / 2) * (varpi_dot_int / P) * np.sqrt((svarpi_dot_int / varpi_dot_int)**2 + (sP / P)**2)
 
     return dict(a_h=a_h, sigma=sigma,
                 P=P, sP=sP, H=H, sH=sH, K=K, sK=sK,
                 F=np.array([Fx, Fy, Fz]), sF=np.array([sFx, sFy, sFz]),
                 tau=np.array([tx, ty, tz]), stau=np.array([stx, sty, stz]),
-                varpi_dot=varpi_dot_int, svarpi_dot=svarpi_dot_int)
+                varpi_dot=varpi_dot_int, svarpi_dot=svarpi_dot_int,
+                tildeQ=tildeQ, stildeQ=stildeQ)
 
 # ── Chandrasekhar dynamical friction ─────────────────────────────────────────
 
@@ -626,7 +643,8 @@ if __name__ == '__main__':
             meta_h, bins_h = meta, data_bins
 
         check_V0_configs = []
-        test_dirs = {'z': np.array([0., 0., 1.]), 'x': np.array([1., 0., 0.])}
+        test_dirs = {'z': np.array([0., 0., 1.]), 'x': np.array([1., 0., 0.]),
+                     'y': np.array([0., 1., 0.])}
         for dname, dhat in test_dirs.items():
             for V0r in [-2, -1, 0, 1, 2]:
                 check_V0_configs.append((f'{dname},{V0r:+d}', V0r, dhat))
@@ -660,8 +678,9 @@ if __name__ == '__main__':
     # ── Compute H, K, tau, F for several signed V_0 directions ──
     V0_ratios = [-2, -1, 0, 1, 2]
     directions = {
-        r'$\hat z$ (perp. to binary)': np.array([0., 0., 1.]),
-        r'$\hat x$ (eccentricity)':    np.array([1., 0., 0.]),
+        r'$\hat z$ (perp. to binary)':          np.array([0., 0., 1.]),
+        r'$\hat x$ (eccentricity)':              np.array([1., 0., 0.]),
+        r'$\hat y$ (in-plane, $\perp$ ecc.)':    np.array([0., 1., 0.]),
     }
 
     results = {}
@@ -684,6 +703,8 @@ if __name__ == '__main__':
             stau_arr   = np.empty((N_ah, 3))
             varpi_dot_arr  = np.empty(N_ah)
             svarpi_dot_arr = np.empty(N_ah)
+            tildeQ_arr     = np.empty(N_ah)
+            stildeQ_arr    = np.empty(N_ah)
 
             for i, sig in enumerate(sigma):
                 V0 = V0r * sig * dir_hat
@@ -698,11 +719,14 @@ if __name__ == '__main__':
                 stau_arr[i]   = r['stau']
                 varpi_dot_arr[i]  = r['varpi_dot']
                 svarpi_dot_arr[i] = r['svarpi_dot']
+                tildeQ_arr[i]     = r['tildeQ']
+                stildeQ_arr[i]    = r['stildeQ']
 
             results[key] = dict(
                 H=H_arr, sH=sH_arr, K=K_arr, sK=sK_arr,
                 F=F_arr, sF=sF_arr, tau=tau_arr, stau=stau_arr,
                 varpi_dot=varpi_dot_arr, svarpi_dot=svarpi_dot_arr,
+                tildeQ=tildeQ_arr, stildeQ=stildeQ_arr,
             )
             print(f"  Computed: V_0/sigma={V0r:+d}, dir={dir_label}")
 
@@ -762,6 +786,23 @@ if __name__ == '__main__':
     ax_varpi.set_title(f'Precession rate (q={q}, e={e_ecc})')
     fig_varpi.tight_layout()
 
+    # ── Plot tildeQ(a/a_h) ──
+    fig_tQ, ax_tQ = plt.subplots(figsize=(7, 5))
+    seen_zero = False
+    for (dir_label, V0r), res in results.items():
+        if V0r == 0:
+            if seen_zero: continue
+            seen_zero = True
+        ax_tQ.plot(1/a_h, res['tildeQ'], label=_label(V0r, dir_label))
+        ax_tQ.fill_between(1/a_h, res['tildeQ'] - res['stildeQ'],
+                           res['tildeQ'] + res['stildeQ'], alpha=0.08)
+    ax_tQ.set_xscale('log')
+    ax_tQ.set_xlabel(r'$a/a_h$')
+    ax_tQ.set_ylabel(r'$\tilde Q$')
+    ax_tQ.legend(fontsize=7)
+    ax_tQ.set_title(f'$\\tilde Q$ (q={q}, e={e_ecc})')
+    fig_tQ.tight_layout()
+
     # ── Plot signed F components: one figure per V_0 direction ──
     comp_names = ['x', 'y', 'z']
     for dir_label, dir_hat in directions.items():
@@ -817,13 +858,14 @@ if __name__ == '__main__':
 
     # ── Chandrasekhar check: F_parallel vs |V_0|/sigma, two directions ─────
     ch_directions = {
-        r'$\hat z$ (perp.)': np.array([0., 0., 1.]),
-        r'$\hat x$ (ecc.)':  np.array([1., 0., 0.]),
+        r'$\hat z$ (perp.)':    np.array([0., 0., 1.]),
+        r'$\hat x$ (ecc.)':     np.array([1., 0., 0.]),
+        r'$\hat y$ (in-plane)': np.array([0., 1., 0.]),
     }
     test_ah_indices = [N_ah // 5, 2 * N_ah // 5, 3 * N_ah // 5, 4 * N_ah // 5]
     V0_test_ratios = np.logspace(np.log10(0.5), np.log10(15), 25)
 
-    fig_ch, axes_ch = plt.subplots(2, len(ch_directions), figsize=(14, 10),
+    fig_ch, axes_ch = plt.subplots(2, len(ch_directions), figsize=(20, 10),
                                     sharex='col')
 
     for col, (dir_label, ch_dir) in enumerate(ch_directions.items()):

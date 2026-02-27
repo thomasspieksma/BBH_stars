@@ -6,8 +6,8 @@ r_sphere = 50
 t_max = 1e+11
 
 rho = 1
-q = 0.3
-e = 0.1
+q = 0.02
+e = 0.6
 Tcut = 146021599595
 
 mu = q / (1+q)**2
@@ -18,7 +18,7 @@ def b_max(v):
 def f(v, sigma):
     return np.sqrt(2/np.pi) * (v**2/sigma**3) * np.exp(-v**2 / (2*sigma**2))
 
-v, DeltaE, sDeltaE, DeltaT, sDeltaT, Deltavx, sDeltavx, Deltavy, sDeltavy, Deltavz, sDeltavz, DeltaLx, sDeltaLx, DeltaLy, sDeltaLy, DeltaLz, sDeltaLz, Delta_varpi, sDelta_varpi, Nresolved = np.loadtxt('../Data/results-precession/q='+str(q)+'_e='+str(e)+'_Tcut=100000000000.txt', unpack=True)
+v, DeltaE, sDeltaE, DeltaT, sDeltaT, Deltavx, sDeltavx, Deltavy, sDeltavy, Deltavz, sDeltavz, DeltaLx, sDeltaLx, DeltaLy, sDeltaLy, DeltaLz, sDeltaLz, Delta_varpi, sDelta_varpi, Nresolved = np.loadtxt('../Data/results-precession-soft/q='+str(q)+'_e='+str(e)+'_Tcut=100000000000.txt', unpack=True)
 
 # v, DeltaE, sDeltaE, DeltaT, sDeltaT, Deltavx, sDeltavx, Deltavy, sDeltavy, Deltavz, sDeltavz, DeltaLx, sDeltaLx, DeltaLy, sDeltaLy, DeltaLz, sDeltaLz, Delta_varpi, sDelta_varpi, Nresolved = np.loadtxt('results/q='+str(q)+'_e='+str(e)+'.txt', unpack=True)
 
