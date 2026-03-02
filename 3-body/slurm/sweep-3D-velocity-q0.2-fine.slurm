@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=3D-vel-q2
+#SBATCH --job-name=3D-vel-q0.2
 #SBATCH --output=out_%A_%a.out
 #SBATCH --error=err_%A_%a.err
 #SBATCH --array=0-49
@@ -9,7 +9,7 @@
 
 export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
 
-q=2
+q=0.2
 N_v=2000
 N=10000
 l_max=10
