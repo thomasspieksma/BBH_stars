@@ -23,7 +23,9 @@ import sys
 import glob
 import re
 import importlib
+import time as _time
 from scipy.integrate import solve_ivp, quad
+from scipy.interpolate import RegularGridInterpolator
 from scipy.special import erf
 
 # ---------------------------------------------------------------------------
@@ -143,15 +145,21 @@ def compute_rates(xi, e, Vx_s, Vy_s, varpi, q, data, e_grid):
         Q = res['tildeQ'] if np.isfinite(res['tildeQ']) else 0.0
         return H, K, Pe, Pn, Q
 
-    # Interpolation in eccentricity
-    if e <= e_grid[0]:
-        H, K, Pe, Pn, Q = _eval_at_e(e_grid[0])
-    elif e >= e_grid[-1]:
-        H, K, Pe, Pn, Q = _eval_at_e(e_grid[-1])
+    # Use only e > 0 grid points (K formula is singular at e=0)
+    eg = e_grid[e_grid > 0] if e_grid[0] == 0.0 else e_grid
+
+    # Snap to nearest grid point if within tolerance
+    snap_idx = np.argmin(np.abs(eg - e))
+    if abs(eg[snap_idx] - e) < 1e-10:
+        H, K, Pe, Pn, Q = _eval_at_e(eg[snap_idx])
+    elif e <= eg[0]:
+        H, K, Pe, Pn, Q = _eval_at_e(eg[0])
+    elif e >= eg[-1]:
+        H, K, Pe, Pn, Q = _eval_at_e(eg[-1])
     else:
-        idx = int(np.searchsorted(e_grid, e)) - 1
-        idx = max(0, min(idx, len(e_grid) - 2))
-        e_lo, e_hi = e_grid[idx], e_grid[idx + 1]
+        idx = int(np.searchsorted(eg, e)) - 1
+        idx = max(0, min(idx, len(eg) - 2))
+        e_lo, e_hi = eg[idx], eg[idx + 1]
 
         H_lo, K_lo, Pe_lo, Pn_lo, Q_lo = _eval_at_e(e_lo)
         H_hi, K_hi, Pe_hi, Pn_hi, Q_hi = _eval_at_e(e_hi)
@@ -164,6 +172,117 @@ def compute_rates(xi, e, Vx_s, Vy_s, varpi, q, data, e_grid):
         Q  = Q_lo  + frac * (Q_hi  - Q_lo)
 
     # Rotate P from binary frame to lab frame
+    Px = Pe * cos_w - Pn * sin_w
+    Py = Pe * sin_w + Pn * cos_w
+
+    return H, K, Px, Py, Q
+
+
+# ── Precomputed rate tables ───────────────────────────────────────────────────
+
+def _sigma_code(xi, q):
+    return np.sqrt(q) / (2.0 * (1.0 + q)) * np.exp(-xi / 2.0)
+
+
+def precompute_rate_tables(q, data, e_grid, xi_span, n_xi=50, eps_V=0.01):
+    r"""Precompute H, K, Q and P linear-response coefficients on a (xi, e) grid.
+
+    At each grid point, three calls to ``reweight_from_harmonics``:
+    V=0 (for H, K, Q), V along e-hat (for A_ee, A_ne), V along n-hat
+    (for A_en, A_nn).  The acceleration parameter is then
+    P_ehat ≈ A_ee * Ve/σ + A_en * Vn/σ  (linear in velocity).
+    """
+    eg = e_grid[e_grid > 0] if e_grid[0] == 0.0 else e_grid.copy()
+    margin = 0.5
+    xi_lo = max(xi_span[0] - margin, 0.0)
+    xi_hi = xi_span[1] + margin
+    xi_arr = np.linspace(xi_lo, xi_hi, n_xi)
+    n_e = len(eg)
+
+    H_tab  = np.zeros((n_xi, n_e))
+    K_tab  = np.zeros((n_xi, n_e))
+    Q_tab  = np.zeros((n_xi, n_e))
+    A_ee_tab = np.zeros((n_xi, n_e))
+    A_en_tab = np.zeros((n_xi, n_e))
+    A_ne_tab = np.zeros((n_xi, n_e))
+    A_nn_tab = np.zeros((n_xi, n_e))
+
+    total = n_xi * n_e
+    t0 = _time.time()
+
+    for i, xi in enumerate(xi_arr):
+        sc = _sigma_code(xi, q)
+        for j, e_val in enumerate(eg):
+            meta, hb = data[e_val]
+
+            # V = 0
+            res0 = reweight_from_harmonics(meta, hb, np.zeros(3), sc)
+            H_tab[i, j] = res0['H']
+            K_tab[i, j] = res0['K'] if np.isfinite(res0['K']) else 0.0
+            Q_tab[i, j] = res0['tildeQ'] if np.isfinite(res0['tildeQ']) else 0.0
+
+            # V along e-hat  (→ A_ee, A_ne)
+            res_e = reweight_from_harmonics(
+                meta, hb, np.array([eps_V * sc, 0.0, 0.0]), sc)
+            Pe_e = res_e['Q_x'] if np.isfinite(res_e['Q_x']) else 0.0
+            Pn_e = res_e['Q_y'] if np.isfinite(res_e['Q_y']) else 0.0
+            A_ee_tab[i, j] = Pe_e / eps_V
+            A_ne_tab[i, j] = Pn_e / eps_V
+
+            # V along n-hat  (→ A_en, A_nn)
+            res_n = reweight_from_harmonics(
+                meta, hb, np.array([0.0, eps_V * sc, 0.0]), sc)
+            Pe_n = res_n['Q_x'] if np.isfinite(res_n['Q_x']) else 0.0
+            Pn_n = res_n['Q_y'] if np.isfinite(res_n['Q_y']) else 0.0
+            A_en_tab[i, j] = Pe_n / eps_V
+            A_nn_tab[i, j] = Pn_n / eps_V
+
+        done = (i + 1) * n_e
+        elapsed = _time.time() - t0
+        eta = elapsed / (i + 1) * (n_xi - i - 1)
+        print(f"\r  Precomputing rates: {done}/{total} "
+              f"({100*done/total:.0f}%), ETA {eta:.0f}s   ",
+              end='', flush=True)
+
+    print(f"\r  Precomputed rates in {_time.time()-t0:.1f}s"
+          + " " * 30)
+
+    def _interp(tab):
+        return RegularGridInterpolator(
+            (xi_arr, eg), tab, method='linear',
+            bounds_error=False, fill_value=None)
+
+    return {
+        'xi_grid': xi_arr, 'e_grid': eg, 'q': q,
+        'H': _interp(H_tab), 'K': _interp(K_tab), 'Q': _interp(Q_tab),
+        'A_ee': _interp(A_ee_tab), 'A_en': _interp(A_en_tab),
+        'A_ne': _interp(A_ne_tab), 'A_nn': _interp(A_nn_tab),
+    }
+
+
+def compute_rates_fast(xi, e, Vx_s, Vy_s, varpi, tables):
+    """Fast rate evaluation via precomputed interpolation tables."""
+    cos_w, sin_w = np.cos(varpi), np.sin(varpi)
+
+    Ve_s =  Vx_s * cos_w + Vy_s * sin_w
+    Vn_s = -Vx_s * sin_w + Vy_s * cos_w
+
+    xi_c = np.clip(xi, tables['xi_grid'][0], tables['xi_grid'][-1])
+    e_c  = np.clip(e,  tables['e_grid'][0],  tables['e_grid'][-1])
+    pt = np.array([[xi_c, e_c]])
+
+    H = tables['H'](pt).item()
+    K = tables['K'](pt).item()
+    Q = tables['Q'](pt).item()
+
+    A_ee = tables['A_ee'](pt).item()
+    A_en = tables['A_en'](pt).item()
+    A_ne = tables['A_ne'](pt).item()
+    A_nn = tables['A_nn'](pt).item()
+
+    Pe = A_ee * Ve_s + A_en * Vn_s
+    Pn = A_ne * Ve_s + A_nn * Vn_s
+
     Px = Pe * cos_w - Pn * sin_w
     Py = Pe * sin_w + Pn * cos_w
 
@@ -286,7 +405,7 @@ def solve(q, e0, Vx0_s=0.0, Vy0_s=0.0, varpi0=0.0,
         r_outer_ah = 4.0 * (1.0 + q)**2 / q
 
     data, e_grid = load_harmonics_data(q, data_dir)
-    e_max = e_grid[-1] - 0.01          # stay safely inside data grid
+    e_max = e_grid[-1] - 0.01
 
     ch_funcs = {
         'integral': chandrasekhar_decel_integral,
@@ -297,7 +416,19 @@ def solve(q, e0, Vx0_s=0.0, Vy0_s=0.0, varpi0=0.0,
         raise ValueError(f"Unknown chandrasekhar mode: {chandrasekhar!r}")
     ch_func = ch_funcs[chandrasekhar]
 
+    _rhs_count = [0]
+    _rhs_t0 = [None]
+
     def rhs(xi, y):
+        if _rhs_t0[0] is None:
+            _rhs_t0[0] = _time.time()
+        _rhs_count[0] += 1
+        if _rhs_count[0] % 20 == 0:
+            elapsed = _time.time() - _rhs_t0[0]
+            print(f"\r  xi={xi:.3f}  e={y[0]:.4f}  |V|/σ={np.hypot(y[1],y[2]):.5f}  "
+                  f"[{_rhs_count[0]} evals, {elapsed:.1f}s]   ",
+                  end='', flush=True)
+
         e_cur, Vx_s, Vy_s, varpi, _t, _x, _y = y
         e_cur = np.clip(e_cur, 1e-6, 1.0 - 1e-6)
 
@@ -338,7 +469,10 @@ def solve(q, e0, Vx0_s=0.0, Vy0_s=0.0, varpi0=0.0,
                     events=_e_boundary)
     defaults.update(solve_ivp_kwargs)
 
-    return solve_ivp(rhs, xi_span, y0, **defaults)
+    sol = solve_ivp(rhs, xi_span, y0, **defaults)
+    elapsed = _time.time() - _rhs_t0[0] if _rhs_t0[0] else 0
+    print(f"\r  Done: {_rhs_count[0]} evals in {elapsed:.1f}s" + " " * 30)
+    return sol
 
 
 def solve_simple(q, e0, xi_span=(0.0, 5.0), data_dir=None, **solve_ivp_kwargs):
@@ -355,7 +489,19 @@ def solve_simple(q, e0, xi_span=(0.0, 5.0), data_dir=None, **solve_ivp_kwargs):
     data, e_grid = load_harmonics_data(q, data_dir)
     e_max = e_grid[-1] - 0.01
 
+    _rhs_count = [0]
+    _rhs_t0 = [None]
+
     def rhs(xi, y):
+        if _rhs_t0[0] is None:
+            _rhs_t0[0] = _time.time()
+        _rhs_count[0] += 1
+        if _rhs_count[0] % 20 == 0:
+            elapsed = _time.time() - _rhs_t0[0]
+            print(f"\r  (V=0 ref) xi={xi:.3f}  e={y[0]:.4f}  "
+                  f"[{_rhs_count[0]} evals, {elapsed:.1f}s]   ",
+                  end='', flush=True)
+
         e_cur, _t = y
         e_cur = np.clip(e_cur, 1e-6, 1.0 - 1e-6)
         H, K, _, _, _ = compute_rates(xi, e_cur, 0.0, 0.0, 0.0,
@@ -375,7 +521,10 @@ def solve_simple(q, e0, xi_span=(0.0, 5.0), data_dir=None, **solve_ivp_kwargs):
                     events=_e_boundary)
     defaults.update(solve_ivp_kwargs)
 
-    return solve_ivp(rhs, xi_span, y0, **defaults)
+    sol = solve_ivp(rhs, xi_span, y0, **defaults)
+    elapsed = _time.time() - _rhs_t0[0] if _rhs_t0[0] else 0
+    print(f"\r  (V=0 ref) Done: {_rhs_count[0]} evals in {elapsed:.1f}s" + " " * 20)
+    return sol
 
 
 # ── CLI entry point ───────────────────────────────────────────────────────────
@@ -427,11 +576,12 @@ if __name__ == '__main__':
           f"(a/a_h: {np.exp(-xi_start):.4f} → {np.exp(-args.xi_end):.6f}), "
           f"Chandrasekhar: {args.chandrasekhar}")
 
+    xi_span = (xi_start, args.xi_end)
+
     # ── Full solution ─────────────────────────────────────────────────────
-    print("Loading data (full)...")
+    print("Integrating (full)...")
     sol = solve(args.q, args.e0, args.Vx0, args.Vy0, args.varpi0,
-                xi_span=(xi_start, args.xi_end),
-                chandrasekhar=args.chandrasekhar)
+                xi_span=xi_span, chandrasekhar=args.chandrasekhar)
 
     if not sol.success and _status(sol).startswith("FAILED"):
         print(f"\nIntegration {_status(sol)}")
@@ -451,8 +601,8 @@ if __name__ == '__main__':
     print(f"  t/T_hard:  {t[0]:.4f} → {t[-1]:.4f}")
 
     # ── V=0 reference solution ────────────────────────────────────────────
-    print("Loading data (V=0 reference)...")
-    sol0 = solve_simple(args.q, args.e0, xi_span=(xi_start, args.xi_end))
+    print("Integrating (V=0 reference)...")
+    sol0 = solve_simple(args.q, args.e0, xi_span=xi_span)
 
     xi0 = sol0.t
     e0_ref, t0_ref = sol0.y
