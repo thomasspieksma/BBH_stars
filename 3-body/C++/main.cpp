@@ -797,7 +797,7 @@ int main(int argc, char* argv[]) {
     double e = std::stod(argv[2]);
     
     double Tmax = 1e11;
-    bool split_by_Tcut = false;  // toggle to enable/disable multi‑Tcut output
+    bool split_by_Tcut = true;  // toggle to enable/disable multi‑Tcut output
 
     int max_steps = 1e9;
     int N = 1e4;
@@ -807,7 +807,7 @@ int main(int argc, char* argv[]) {
     std::vector<double> TmaxCuts;
     double Tmin_cut = 1e3;
     if (split_by_Tcut) {
-        int n_cuts = 40;   // number of log‑spaced cut values
+        int n_cuts = 100;   // number of log‑spaced cut values
         double log_min = std::log10(Tmin_cut);
         double log_max = std::log10(Tmax);
         for (int i = 0; i < n_cuts; ++i) {
