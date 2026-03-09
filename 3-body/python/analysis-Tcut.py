@@ -53,9 +53,9 @@ tauy_vals = np.zeros(N)
 tauz_vals = np.zeros(N)
 H_vals  = np.zeros(N)
 K_vals  = np.zeros(N)
-Qx_vals = np.zeros(N)
-Qy_vals = np.zeros(N)
-tildeQ_vals = np.zeros(N)
+Px_vals = np.zeros(N)
+Py_vals = np.zeros(N)
+Q_vals = np.zeros(N)
 
 sP_vals  = np.zeros(N)
 sFx_vals = np.zeros(N)
@@ -66,9 +66,9 @@ stauy_vals = np.zeros(N)
 stauz_vals = np.zeros(N)
 sH_vals  = np.zeros(N)
 sK_vals  = np.zeros(N)
-sQx_vals = np.zeros(N)
-sQy_vals = np.zeros(N)
-stildeQ_vals = np.zeros(N)
+sPx_vals = np.zeros(N)
+sPy_vals = np.zeros(N)
+sQ_vals = np.zeros(N)
 
 ###################################################
 # Functions (as in your script)
@@ -94,9 +94,9 @@ for i, (Tcut, filename) in enumerate(parsed_files):
     except:
         print("File unreadable:", filename)
         for arr in [P_vals, Fx_vals, Fy_vals, Fz_vals, taux_vals, tauy_vals, tauz_vals,
-                    H_vals, K_vals, Qx_vals, Qy_vals, tildeQ_vals,
+                    H_vals, K_vals, Px_vals, Py_vals, Q_vals,
                     sP_vals, sFx_vals, sFy_vals, sFz_vals, staux_vals, stauy_vals, stauz_vals,
-                    sH_vals, sK_vals, sQx_vals, sQy_vals, stildeQ_vals]:
+                    sH_vals, sK_vals, sPx_vals, sPy_vals, sQ_vals]:
             arr[i] = np.nan
         continue
 
@@ -181,9 +181,9 @@ for i, (Tcut, filename) in enumerate(parsed_files):
         K = -(1 - e_fixed**2)/(2*e_fixed) + np.sqrt(1 - e_fixed**2)/(2*e_fixed) * tau_z/P
 
     # Q(a_h)
-    Q_x = -(mu / (2*sigma)) * F_x / P
-    Q_y = -(mu / (2*sigma)) * F_y / P
-    tildeQ = -(mu / 2) * varpi_dot / P
+    P_x = -(mu / (2*sigma)) * F_x / P
+    P_y = -(mu / (2*sigma)) * F_y / P
+    Q = -(mu / 2) * varpi_dot / P
 
     ###################################################
     # Uncertainty propagation
@@ -208,9 +208,9 @@ for i, (Tcut, filename) in enumerate(parsed_files):
     else:
         sK = np.sqrt(1-e_fixed**2)/(2*e_fixed) * np.abs(tau_z/P) * np.sqrt((stau_z/tau_z)**2 + (sP/P)**2)
 
-    sQ_x = (mu / (2*sigma)) * np.abs(F_x / P) * np.sqrt((sF_x/F_x)**2 + (sP/P)**2)
-    sQ_y = (mu / (2*sigma)) * np.abs(F_y / P) * np.sqrt((sF_y/F_y)**2 + (sP/P)**2)
-    stildeQ = -(mu / 2) * (varpi_dot / P) * np.sqrt((svarpi_dot/varpi_dot)**2 + (sP/P)**2)
+    sP_x = (mu / (2*sigma)) * np.abs(F_x / P) * np.sqrt((sF_x/F_x)**2 + (sP/P)**2)
+    sP_y = (mu / (2*sigma)) * np.abs(F_y / P) * np.sqrt((sF_y/F_y)**2 + (sP/P)**2)
+    sQ = -(mu / 2) * (varpi_dot / P) * np.sqrt((svarpi_dot/varpi_dot)**2 + (sP/P)**2)
 
     ###################################################
     # Interpolate all quantities at chosen a_h
@@ -226,9 +226,9 @@ for i, (Tcut, filename) in enumerate(parsed_files):
     tauz_vals[i] = np.interp(x, a_h[::-1], tau_z[::-1])
     H_vals[i]  = np.interp(x, a_h[::-1], H[::-1])
     K_vals[i]  = np.interp(x, a_h[::-1], K[::-1])
-    Qx_vals[i] = np.interp(x, a_h[::-1], Q_x[::-1])
-    Qy_vals[i] = np.interp(x, a_h[::-1], Q_y[::-1])
-    tildeQ_vals[i] = np.interp(x, a_h[::-1], tildeQ[::-1])
+    Px_vals[i] = np.interp(x, a_h[::-1], P_x[::-1])
+    Py_vals[i] = np.interp(x, a_h[::-1], P_y[::-1])
+    Q_vals[i] = np.interp(x, a_h[::-1], Q[::-1])
 
     sP_vals[i]  = np.interp(x, a_h[::-1], sP[::-1])
     sFx_vals[i] = np.interp(x, a_h[::-1], sF_x[::-1])
@@ -239,9 +239,9 @@ for i, (Tcut, filename) in enumerate(parsed_files):
     stauz_vals[i] = np.interp(x, a_h[::-1], stau_z[::-1])
     sH_vals[i]  = np.interp(x, a_h[::-1], sH[::-1])
     sK_vals[i]  = np.interp(x, a_h[::-1], sK[::-1])
-    sQx_vals[i] = np.interp(x, a_h[::-1], sQ_x[::-1])
-    sQy_vals[i] = np.interp(x, a_h[::-1], sQ_y[::-1])
-    stildeQ_vals[i] = np.interp(x, a_h[::-1], stildeQ[::-1])
+    sPx_vals[i] = np.interp(x, a_h[::-1], sP_x[::-1])
+    sPy_vals[i] = np.interp(x, a_h[::-1], sP_y[::-1])
+    sQ_vals[i] = np.interp(x, a_h[::-1], sQ[::-1])
 
 
 ###################################################
@@ -281,12 +281,12 @@ ax3.set_title(fr"$F$ for q={q_fixed}, e={e_fixed}, and $a/a_h=${a_over_a_h_targe
 
 fig4, ax4 = plt.subplots()
 
-ax4.plot(Tcuts, tildeQ_vals)
-ax4.fill_between(Tcuts, tildeQ_vals - stildeQ_vals, tildeQ_vals + stildeQ_vals, alpha=0.3)
+ax4.plot(Tcuts, Q_vals)
+ax4.fill_between(Tcuts, Q_vals - sQ_vals, Q_vals + sQ_vals, alpha=0.3)
 
 ax4.set_xscale("log")
 ax4.set_xlabel(r"$T_{\rm cut}$")
-ax4.set_ylabel(r"$\tilde Q$")
-ax4.set_title(fr"$\tilde Q$ for q={q_fixed}, e={e_fixed}, and $a/a_h=${a_over_a_h_target}")
+ax4.set_ylabel(r"$Q$")
+ax4.set_title(fr"$Q$ for q={q_fixed}, e={e_fixed}, and $a/a_h=${a_over_a_h_target}")
 
 plt.show()

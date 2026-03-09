@@ -98,9 +98,9 @@ tau_z = np.trapz(tauv_z0 * f0, x=v0, axis=0)
 H = np.trapz(Hv0 * H_integrand0, x=v0, axis=0)
 varpi_dot = np.trapz(varpi_dot_v0 * f0, x=v0, axis=0)
 K = - (1-e**2)/(2*e) + np.sqrt(1-e**2)/(2*e) * tau_z/P
-Q_x = - (mu / (2*sigma)) * F_x / P
-Q_y = - (mu / (2*sigma)) * F_y / P
-tildeQ = - (mu / 2) * varpi_dot / P
+P_x = - (mu / (2*sigma)) * F_x / P
+P_y = - (mu / (2*sigma)) * F_y / P
+Q = - (mu / 2) * varpi_dot / P
 
 # Calculate uncertainties using propagation of uncertainty with trapezoidal rule
 sP_integrand = sPv0 * f0
@@ -128,9 +128,9 @@ stau_z = np.sqrt(np.sum((weights[:, np.newaxis] * stau_z_integrand)**2, axis=0))
 sH = np.sqrt(np.sum((weights[:, np.newaxis] * sH_integrand)**2, axis=0))
 svarpi_dot = np.sqrt(np.sum((weights[:, np.newaxis] * svarpi_dot_integrand)**2, axis=0))
 sK = np.sqrt(1-e**2)/(2*e) * np.abs(tau_z/P) * np.sqrt((stau_z/tau_z)**2 + (sP/P)**2)
-sQ_x = (mu / (2*sigma)) * np.abs(F_x / P) * np.sqrt((sF_x/F_x)**2 + (sP/P)**2)
-sQ_y = (mu / (2*sigma)) * np.abs(F_y / P) * np.sqrt((sF_y/F_y)**2 + (sP/P)**2)
-stildeQ = - (mu / 2) * (varpi_dot / P) * np.sqrt((svarpi_dot/varpi_dot)**2 + (sP/P)**2)
+sP_x = (mu / (2*sigma)) * np.abs(F_x / P) * np.sqrt((sF_x/F_x)**2 + (sP/P)**2)
+sP_y = (mu / (2*sigma)) * np.abs(F_y / P) * np.sqrt((sF_y/F_y)**2 + (sP/P)**2)
+sQ = - (mu / 2) * (varpi_dot / P) * np.sqrt((svarpi_dot/varpi_dot)**2 + (sP/P)**2)
 
 fig, ax = plt.subplots()
 
@@ -180,14 +180,14 @@ ax3.set_xscale('log')
 
 fig4, ax4 = plt.subplots()
 
-ax4.plot(1/a_h, Q_x, label='tol=0.02')
-ax4.fill_between(1/a_h, Q_x-sQ_x, Q_x+sQ_x, alpha=0.3)
+ax4.plot(1/a_h, P_x, label='tol=0.02')
+ax4.fill_between(1/a_h, P_x-sP_x, P_x+sP_x, alpha=0.3)
 
-ax4.plot(1/a_h, Q_y, label='tol=0.02')
-ax4.fill_between(1/a_h, Q_y-sQ_y, Q_y+sQ_y, alpha=0.3)
+ax4.plot(1/a_h, P_y, label='tol=0.02')
+ax4.fill_between(1/a_h, P_y-sP_y, P_y+sP_y, alpha=0.3)
 
 ax4.set_xlabel(r'$a/a_h$')
-ax4.set_ylabel(r'$Q_x$, $Q_y$')
+ax4.set_ylabel(r'$P_x$, $P_y$')
 
 ax4.set_xscale('log')
 
@@ -314,9 +314,9 @@ tau_z = np.trapz(tauv_z0 * f0, x=v0, axis=0)
 H = np.trapz(Hv0 * H_integrand0, x=v0, axis=0)
 varpi_dot = np.trapz(varpi_dot_v0 * f0, x=v0, axis=0)
 K = - (1-e**2)/(2*e) + np.sqrt(1-e**2)/(2*e) * tau_z/P
-Q_x = - (mu / (2*sigma)) * F_x / P
-Q_y = - (mu / (2*sigma)) * F_y / P
-tildeQ = - (mu / 2) * varpi_dot / P
+P_x = - (mu / (2*sigma)) * F_x / P
+P_y = - (mu / (2*sigma)) * F_y / P
+Q = - (mu / 2) * varpi_dot / P
 
 # Calculate uncertainties using propagation of uncertainty with trapezoidal rule
 sP_integrand = sPv0 * f0
@@ -344,9 +344,9 @@ stau_z = np.sqrt(np.sum((weights[:, np.newaxis] * stau_z_integrand)**2, axis=0))
 sH = np.sqrt(np.sum((weights[:, np.newaxis] * sH_integrand)**2, axis=0))
 svarpi_dot = np.sqrt(np.sum((weights[:, np.newaxis] * svarpi_dot_integrand)**2, axis=0))
 sK = np.sqrt(1-e**2)/(2*e) * np.abs(tau_z/P) * np.sqrt((stau_z/tau_z)**2 + (sP/P)**2)
-sQ_x = (mu / (2*sigma)) * np.abs(F_x / P) * np.sqrt((sF_x/F_x)**2 + (sP/P)**2)
-sQ_y = (mu / (2*sigma)) * np.abs(F_y / P) * np.sqrt((sF_y/F_y)**2 + (sP/P)**2)
-stildeQ = - (mu / 2) * (varpi_dot / P) * np.sqrt((svarpi_dot/varpi_dot)**2 + (sP/P)**2)
+sP_x = (mu / (2*sigma)) * np.abs(F_x / P) * np.sqrt((sF_x/F_x)**2 + (sP/P)**2)
+sP_y = (mu / (2*sigma)) * np.abs(F_y / P) * np.sqrt((sF_y/F_y)**2 + (sP/P)**2)
+sQ = - (mu / 2) * (varpi_dot / P) * np.sqrt((svarpi_dot/varpi_dot)**2 + (sP/P)**2)
 
 ax.plot(v, Hv)
 ax.fill_between(v, Hv-sHv, Hv+sHv, alpha=0.3)
@@ -359,10 +359,10 @@ ax3.fill_between(1/a_h, K-sK, K+sK, alpha=0.3)
 ax3.set_xlabel(r'$a/a_h$')
 ax3.set_ylabel(r'$K$')
 
-ax4.plot(1/a_h, Q_x, label='RK, tol=0.01')
-ax4.fill_between(1/a_h, Q_x-sQ_x, Q_x+sQ_x, alpha=0.3)
-ax4.plot(1/a_h, Q_y, label='RK, tol=0.01')
-ax4.fill_between(1/a_h, Q_y-sQ_y, Q_y+sQ_y, alpha=0.3)
+ax4.plot(1/a_h, P_x, label='RK, tol=0.01')
+ax4.fill_between(1/a_h, P_x-sP_x, P_x+sP_x, alpha=0.3)
+ax4.plot(1/a_h, P_y, label='RK, tol=0.01')
+ax4.fill_between(1/a_h, P_y-sP_y, P_y+sP_y, alpha=0.3)
 
 ##################################################
 
@@ -445,9 +445,9 @@ tau_z = np.trapz(tauv_z0 * f0, x=v0, axis=0)
 H = np.trapz(Hv0 * H_integrand0, x=v0, axis=0)
 varpi_dot = np.trapz(varpi_dot_v0 * f0, x=v0, axis=0)
 K = - (1-e**2)/(2*e) + np.sqrt(1-e**2)/(2*e) * tau_z/P
-Q_x = - (mu / (2*sigma)) * F_x / P
-Q_y = - (mu / (2*sigma)) * F_y / P
-tildeQ = - (mu / 2) * varpi_dot / P
+P_x = - (mu / (2*sigma)) * F_x / P
+P_y = - (mu / (2*sigma)) * F_y / P
+Q = - (mu / 2) * varpi_dot / P
 
 # Calculate uncertainties using propagation of uncertainty with trapezoidal rule
 sP_integrand = sPv0 * f0
@@ -475,9 +475,9 @@ stau_z = np.sqrt(np.sum((weights[:, np.newaxis] * stau_z_integrand)**2, axis=0))
 sH = np.sqrt(np.sum((weights[:, np.newaxis] * sH_integrand)**2, axis=0))
 svarpi_dot = np.sqrt(np.sum((weights[:, np.newaxis] * svarpi_dot_integrand)**2, axis=0))
 sK = np.sqrt(1-e**2)/(2*e) * np.abs(tau_z/P) * np.sqrt((stau_z/tau_z)**2 + (sP/P)**2)
-sQ_x = (mu / (2*sigma)) * np.abs(F_x / P) * np.sqrt((sF_x/F_x)**2 + (sP/P)**2)
-sQ_y = (mu / (2*sigma)) * np.abs(F_y / P) * np.sqrt((sF_y/F_y)**2 + (sP/P)**2)
-stildeQ = - (mu / 2) * (varpi_dot / P) * np.sqrt((svarpi_dot/varpi_dot)**2 + (sP/P)**2)
+sP_x = (mu / (2*sigma)) * np.abs(F_x / P) * np.sqrt((sF_x/F_x)**2 + (sP/P)**2)
+sP_y = (mu / (2*sigma)) * np.abs(F_y / P) * np.sqrt((sF_y/F_y)**2 + (sP/P)**2)
+sQ = - (mu / 2) * (varpi_dot / P) * np.sqrt((svarpi_dot/varpi_dot)**2 + (sP/P)**2)
 
 ax.plot(v, Hv)
 ax.fill_between(v, Hv-sHv, Hv+sHv, alpha=0.3)
@@ -488,10 +488,10 @@ ax2.fill_between(1/a_h, H-sH, H+sH, alpha=0.3)
 ax3.plot(1/a_h, K, label='RK, tol=0.005')
 ax3.fill_between(1/a_h, K-sK, K+sK, alpha=0.3)
 
-ax4.plot(1/a_h, Q_x, label='RK, tol=0.005')
-ax4.fill_between(1/a_h, Q_x-sQ_x, Q_x+sQ_x, alpha=0.3)
-ax4.plot(1/a_h, Q_y, label='RK, tol=0.005')
-ax4.fill_between(1/a_h, Q_y-sQ_y, Q_y+sQ_y, alpha=0.3)
+ax4.plot(1/a_h, P_x, label='RK, tol=0.005')
+ax4.fill_between(1/a_h, P_x-sP_x, P_x+sP_x, alpha=0.3)
+ax4.plot(1/a_h, P_y, label='RK, tol=0.005')
+ax4.fill_between(1/a_h, P_y-sP_y, P_y+sP_y, alpha=0.3)
 
 ##################################################
 
@@ -576,9 +576,9 @@ tau_z = np.trapz(tauv_z0 * f0, x=v0, axis=0)
 H = np.trapz(Hv0 * H_integrand0, x=v0, axis=0)
 varpi_dot = np.trapz(varpi_dot_v0 * f0, x=v0, axis=0)
 K = - (1-e**2)/(2*e) + np.sqrt(1-e**2)/(2*e) * tau_z/P
-Q_x = - (mu / (2*sigma)) * F_x / P
-Q_y = - (mu / (2*sigma)) * F_y / P
-tildeQ = - (mu / 2) * varpi_dot / P
+P_x = - (mu / (2*sigma)) * F_x / P
+P_y = - (mu / (2*sigma)) * F_y / P
+Q = - (mu / 2) * varpi_dot / P
 
 # Calculate uncertainties using propagation of uncertainty with trapezoidal rule
 sP_integrand = sPv0 * f0
@@ -606,9 +606,9 @@ stau_z = np.sqrt(np.sum((weights[:, np.newaxis] * stau_z_integrand)**2, axis=0))
 sH = np.sqrt(np.sum((weights[:, np.newaxis] * sH_integrand)**2, axis=0))
 svarpi_dot = np.sqrt(np.sum((weights[:, np.newaxis] * svarpi_dot_integrand)**2, axis=0))
 sK = np.sqrt(1-e**2)/(2*e) * np.abs(tau_z/P) * np.sqrt((stau_z/tau_z)**2 + (sP/P)**2)
-sQ_x = (mu / (2*sigma)) * np.abs(F_x / P) * np.sqrt((sF_x/F_x)**2 + (sP/P)**2)
-sQ_y = (mu / (2*sigma)) * np.abs(F_y / P) * np.sqrt((sF_y/F_y)**2 + (sP/P)**2)
-stildeQ = - (mu / 2) * (varpi_dot / P) * np.sqrt((svarpi_dot/varpi_dot)**2 + (sP/P)**2)
+sP_x = (mu / (2*sigma)) * np.abs(F_x / P) * np.sqrt((sF_x/F_x)**2 + (sP/P)**2)
+sP_y = (mu / (2*sigma)) * np.abs(F_y / P) * np.sqrt((sF_y/F_y)**2 + (sP/P)**2)
+sQ = - (mu / 2) * (varpi_dot / P) * np.sqrt((svarpi_dot/varpi_dot)**2 + (sP/P)**2)
 
 ax.plot(v, Hv)
 ax.fill_between(v, Hv-sHv, Hv+sHv, alpha=0.3)
@@ -619,10 +619,10 @@ ax2.fill_between(1/a_h, H-sH, H+sH, alpha=0.3)
 ax3.plot(1/a_h, K, label='RK, tol=0.002')
 ax3.fill_between(1/a_h, K-sK, K+sK, alpha=0.3)
 
-ax4.plot(1/a_h, Q_x, label='RK, tol=0.002')
-ax4.fill_between(1/a_h, Q_x-sQ_x, Q_x+sQ_x, alpha=0.3)
-ax4.plot(1/a_h, Q_y, label='RK, tol=0.002')
-ax4.fill_between(1/a_h, Q_y-sQ_y, Q_y+sQ_y, alpha=0.3)
+ax4.plot(1/a_h, P_x, label='RK, tol=0.002')
+ax4.fill_between(1/a_h, P_x-sP_x, P_x+sP_x, alpha=0.3)
+ax4.plot(1/a_h, P_y, label='RK, tol=0.002')
+ax4.fill_between(1/a_h, P_y-sP_y, P_y+sP_y, alpha=0.3)
 
 ##################################################
 
@@ -705,9 +705,9 @@ tau_z = np.trapz(tauv_z0 * f0, x=v0, axis=0)
 H = np.trapz(Hv0 * H_integrand0, x=v0, axis=0)
 varpi_dot = np.trapz(varpi_dot_v0 * f0, x=v0, axis=0)
 K = - (1-e**2)/(2*e) + np.sqrt(1-e**2)/(2*e) * tau_z/P
-Q_x = - (mu / (2*sigma)) * F_x / P
-Q_y = - (mu / (2*sigma)) * F_y / P
-tildeQ = - (mu / 2) * varpi_dot / P
+P_x = - (mu / (2*sigma)) * F_x / P
+P_y = - (mu / (2*sigma)) * F_y / P
+Q = - (mu / 2) * varpi_dot / P
 
 # Calculate uncertainties using propagation of uncertainty with trapezoidal rule
 sP_integrand = sPv0 * f0
@@ -735,9 +735,9 @@ stau_z = np.sqrt(np.sum((weights[:, np.newaxis] * stau_z_integrand)**2, axis=0))
 sH = np.sqrt(np.sum((weights[:, np.newaxis] * sH_integrand)**2, axis=0))
 svarpi_dot = np.sqrt(np.sum((weights[:, np.newaxis] * svarpi_dot_integrand)**2, axis=0))
 sK = np.sqrt(1-e**2)/(2*e) * np.abs(tau_z/P) * np.sqrt((stau_z/tau_z)**2 + (sP/P)**2)
-sQ_x = (mu / (2*sigma)) * np.abs(F_x / P) * np.sqrt((sF_x/F_x)**2 + (sP/P)**2)
-sQ_y = (mu / (2*sigma)) * np.abs(F_y / P) * np.sqrt((sF_y/F_y)**2 + (sP/P)**2)
-stildeQ = - (mu / 2) * (varpi_dot / P) * np.sqrt((svarpi_dot/varpi_dot)**2 + (sP/P)**2)
+sP_x = (mu / (2*sigma)) * np.abs(F_x / P) * np.sqrt((sF_x/F_x)**2 + (sP/P)**2)
+sP_y = (mu / (2*sigma)) * np.abs(F_y / P) * np.sqrt((sF_y/F_y)**2 + (sP/P)**2)
+sQ = - (mu / 2) * (varpi_dot / P) * np.sqrt((svarpi_dot/varpi_dot)**2 + (sP/P)**2)
 
 ax.plot(v, Hv, linestyle='dashed')
 ax.fill_between(v, Hv-sHv, Hv+sHv, alpha=0.3)
@@ -748,10 +748,10 @@ ax2.fill_between(1/a_h, H-sH, H+sH, alpha=0.3)
 ax3.plot(1/a_h, K, label='Pihajoki, tol=0.02', linestyle='dashed')
 ax3.fill_between(1/a_h, K-sK, K+sK, alpha=0.3)
 
-ax4.plot(1/a_h, Q_x, label='Pihajoki, tol=0.02', linestyle='dashed')
-ax4.fill_between(1/a_h, Q_x-sQ_x, Q_x+sQ_x, alpha=0.3)
-ax4.plot(1/a_h, Q_y, label='Pihajoki, tol=0.02', linestyle='dashed')
-ax4.fill_between(1/a_h, Q_y-sQ_y, Q_y+sQ_y, alpha=0.3)
+ax4.plot(1/a_h, P_x, label='Pihajoki, tol=0.02', linestyle='dashed')
+ax4.fill_between(1/a_h, P_x-sP_x, P_x+sP_x, alpha=0.3)
+ax4.plot(1/a_h, P_y, label='Pihajoki, tol=0.02', linestyle='dashed')
+ax4.fill_between(1/a_h, P_y-sP_y, P_y+sP_y, alpha=0.3)
 
 ##################################################
 
@@ -834,9 +834,9 @@ tau_z = np.trapz(tauv_z0 * f0, x=v0, axis=0)
 H = np.trapz(Hv0 * H_integrand0, x=v0, axis=0)
 varpi_dot = np.trapz(varpi_dot_v0 * f0, x=v0, axis=0)
 K = - (1-e**2)/(2*e) + np.sqrt(1-e**2)/(2*e) * tau_z/P
-Q_x = - (mu / (2*sigma)) * F_x / P
-Q_y = - (mu / (2*sigma)) * F_y / P
-tildeQ = - (mu / 2) * varpi_dot / P
+P_x = - (mu / (2*sigma)) * F_x / P
+P_y = - (mu / (2*sigma)) * F_y / P
+Q = - (mu / 2) * varpi_dot / P
 
 # Calculate uncertainties using propagation of uncertainty with trapezoidal rule
 sP_integrand = sPv0 * f0
@@ -864,9 +864,9 @@ stau_z = np.sqrt(np.sum((weights[:, np.newaxis] * stau_z_integrand)**2, axis=0))
 sH = np.sqrt(np.sum((weights[:, np.newaxis] * sH_integrand)**2, axis=0))
 svarpi_dot = np.sqrt(np.sum((weights[:, np.newaxis] * svarpi_dot_integrand)**2, axis=0))
 sK = np.sqrt(1-e**2)/(2*e) * np.abs(tau_z/P) * np.sqrt((stau_z/tau_z)**2 + (sP/P)**2)
-sQ_x = (mu / (2*sigma)) * np.abs(F_x / P) * np.sqrt((sF_x/F_x)**2 + (sP/P)**2)
-sQ_y = (mu / (2*sigma)) * np.abs(F_y / P) * np.sqrt((sF_y/F_y)**2 + (sP/P)**2)
-stildeQ = - (mu / 2) * (varpi_dot / P) * np.sqrt((svarpi_dot/varpi_dot)**2 + (sP/P)**2)
+sP_x = (mu / (2*sigma)) * np.abs(F_x / P) * np.sqrt((sF_x/F_x)**2 + (sP/P)**2)
+sP_y = (mu / (2*sigma)) * np.abs(F_y / P) * np.sqrt((sF_y/F_y)**2 + (sP/P)**2)
+sQ = - (mu / 2) * (varpi_dot / P) * np.sqrt((svarpi_dot/varpi_dot)**2 + (sP/P)**2)
 
 ax.plot(v, Hv, linestyle='dashed')
 ax.fill_between(v, Hv-sHv, Hv+sHv, alpha=0.3)
@@ -877,10 +877,10 @@ ax2.fill_between(1/a_h, H-sH, H+sH, alpha=0.3)
 ax3.plot(1/a_h, K, label='Pihajoki, tol=0.01', linestyle='dashed')
 ax3.fill_between(1/a_h, K-sK, K+sK, alpha=0.3)
 
-ax4.plot(1/a_h, Q_x, label='Pihajoki, tol=0.01', linestyle='dashed')
-ax4.fill_between(1/a_h, Q_x-sQ_x, Q_x+sQ_x, alpha=0.3)
-ax4.plot(1/a_h, Q_y, label='Pihajoki, tol=0.01', linestyle='dashed')
-ax4.fill_between(1/a_h, Q_y-sQ_y, Q_y+sQ_y, alpha=0.3)
+ax4.plot(1/a_h, P_x, label='Pihajoki, tol=0.01', linestyle='dashed')
+ax4.fill_between(1/a_h, P_x-sP_x, P_x+sP_x, alpha=0.3)
+ax4.plot(1/a_h, P_y, label='Pihajoki, tol=0.01', linestyle='dashed')
+ax4.fill_between(1/a_h, P_y-sP_y, P_y+sP_y, alpha=0.3)
 
 ax2.legend()
 ax3.legend()

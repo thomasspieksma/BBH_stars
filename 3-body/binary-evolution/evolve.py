@@ -131,18 +131,18 @@ def compute_rates(xi, e, Vx_s, Vy_s, varpi, q, data, e_grid):
     #   sigma_code = sigma / sqrt(GM/a) = sqrt(q / (4(1+q)^2)) * sqrt(a/a_h)
     sigma_code = np.sqrt(q) / (2.0 * (1.0 + q)) * np.exp(-xi / 2.0)
 
-    V0_code = np.array([Ve_s * sigma_code,
-                        Vn_s * sigma_code,
-                        0.0])
+    V_code = np.array([Ve_s * sigma_code,
+                       Vn_s * sigma_code,
+                       0.0])
 
     def _eval_at_e(e_val):
         meta, harm_bins = data[e_val]
-        res = reweight_from_harmonics(meta, harm_bins, V0_code, sigma_code)
+        res = reweight_from_harmonics(meta, harm_bins, V_code, sigma_code)
         H = res['H']
         K = res['K'] if np.isfinite(res['K']) else 0.0
-        Pe = res['Q_x'] if np.isfinite(res['Q_x']) else 0.0
-        Pn = res['Q_y'] if np.isfinite(res['Q_y']) else 0.0
-        Q = res['tildeQ'] if np.isfinite(res['tildeQ']) else 0.0
+        Pe = res['P_x'] if np.isfinite(res['P_x']) else 0.0
+        Pn = res['P_y'] if np.isfinite(res['P_y']) else 0.0
+        Q = res['Q'] if np.isfinite(res['Q']) else 0.0
         return H, K, Pe, Pn, Q
 
     # Use only e > 0 grid points (K formula is singular at e=0)
@@ -189,6 +189,7 @@ def precompute_rate_tables(q, data, e_grid, xi_span, n_xi=50, eps_V=0.01):
 
     At each grid point, three calls to ``reweight_from_harmonics``:
     V=0 (for H, K, Q), V along e-hat (for A_ee, A_ne), V along n-hat
+
     (for A_en, A_nn).  The acceleration parameter is then
     P_ehat ≈ A_ee * Ve/σ + A_en * Vn/σ  (linear in velocity).
     """
@@ -219,21 +220,21 @@ def precompute_rate_tables(q, data, e_grid, xi_span, n_xi=50, eps_V=0.01):
             res0 = reweight_from_harmonics(meta, hb, np.zeros(3), sc)
             H_tab[i, j] = res0['H']
             K_tab[i, j] = res0['K'] if np.isfinite(res0['K']) else 0.0
-            Q_tab[i, j] = res0['tildeQ'] if np.isfinite(res0['tildeQ']) else 0.0
+            Q_tab[i, j] = res0['Q'] if np.isfinite(res0['Q']) else 0.0
 
             # V along e-hat  (→ A_ee, A_ne)
             res_e = reweight_from_harmonics(
                 meta, hb, np.array([eps_V * sc, 0.0, 0.0]), sc)
-            Pe_e = res_e['Q_x'] if np.isfinite(res_e['Q_x']) else 0.0
-            Pn_e = res_e['Q_y'] if np.isfinite(res_e['Q_y']) else 0.0
+            Pe_e = res_e['P_x'] if np.isfinite(res_e['P_x']) else 0.0
+            Pn_e = res_e['P_y'] if np.isfinite(res_e['P_y']) else 0.0
             A_ee_tab[i, j] = Pe_e / eps_V
             A_ne_tab[i, j] = Pn_e / eps_V
 
             # V along n-hat  (→ A_en, A_nn)
             res_n = reweight_from_harmonics(
                 meta, hb, np.array([0.0, eps_V * sc, 0.0]), sc)
-            Pe_n = res_n['Q_x'] if np.isfinite(res_n['Q_x']) else 0.0
-            Pn_n = res_n['Q_y'] if np.isfinite(res_n['Q_y']) else 0.0
+            Pe_n = res_n['P_x'] if np.isfinite(res_n['P_x']) else 0.0
+            Pn_n = res_n['P_y'] if np.isfinite(res_n['P_y']) else 0.0
             A_en_tab[i, j] = Pe_n / eps_V
             A_nn_tab[i, j] = Pn_n / eps_V
 

@@ -56,10 +56,10 @@ tauy_grid = np.zeros((len(e_values), len(q_values)))
 tauz_grid = np.zeros((len(e_values), len(q_values)))
 H_grid = np.zeros((len(e_values), len(q_values)))
 K_grid = np.zeros((len(e_values), len(q_values)))
-Qx_grid = np.zeros((len(e_values), len(q_values)))
-Qy_grid = np.zeros((len(e_values), len(q_values)))
+Px_grid = np.zeros((len(e_values), len(q_values)))
+Py_grid = np.zeros((len(e_values), len(q_values)))
 varpi_dot_grid = np.zeros((len(e_values), len(q_values)))
-tildeQ_grid = np.zeros((len(e_values), len(q_values)))
+Q_grid = np.zeros((len(e_values), len(q_values)))
 
 sP_grid = np.zeros((len(e_values), len(q_values)))
 sFx_grid = np.zeros((len(e_values), len(q_values)))
@@ -70,10 +70,10 @@ stauy_grid = np.zeros((len(e_values), len(q_values)))
 stauz_grid = np.zeros((len(e_values), len(q_values)))
 sH_grid = np.zeros((len(e_values), len(q_values)))
 sK_grid = np.zeros((len(e_values), len(q_values)))
-sQx_grid = np.zeros((len(e_values), len(q_values)))
-sQy_grid = np.zeros((len(e_values), len(q_values)))
+sPx_grid = np.zeros((len(e_values), len(q_values)))
+sPy_grid = np.zeros((len(e_values), len(q_values)))
 svarpi_dot_grid = np.zeros((len(e_values), len(q_values)))
-stildeQ_grid = np.zeros((len(e_values), len(q_values)))
+sQ_grid = np.zeros((len(e_values), len(q_values)))
 
 ###################################################
 # Main loop over (q, e)
@@ -92,8 +92,8 @@ for q, e, filename in parsed_files:
         print(f"File not found or unreadable: {filename}")
         Fx_grid[ie, iq] = np.nan
         Fy_grid[ie, iq] = np.nan
-        Qx_grid[ie, iq] = np.nan
-        Qy_grid[ie, iq] = np.nan
+        Px_grid[ie, iq] = np.nan
+        Py_grid[ie, iq] = np.nan
         continue
 
     # Hardening radii sampling
@@ -160,9 +160,9 @@ for q, e, filename in parsed_files:
         K = np.full_like(P, np.nan)
     else:
         K = - (1-e**2)/(2*e) + np.sqrt(1-e**2)/(2*e) * tau_z/P
-    Q_x = - (mu / (2*sigma)) * F_x / P
-    Q_y = - (mu / (2*sigma)) * F_y / P
-    tildeQ = - (mu / 2) * varpi_dot / P
+    P_x = - (mu / (2*sigma)) * F_x / P
+    P_y = - (mu / (2*sigma)) * F_y / P
+    Q = - (mu / 2) * varpi_dot / P
 
     # Calculatre uncertainties
     sP_integrand = sPv0 * f0
@@ -193,9 +193,9 @@ for q, e, filename in parsed_files:
         sK = np.full_like(K, np.nan)
     else:
         sK = np.sqrt(1-e**2)/(2*e) * np.abs(tau_z/P) * np.sqrt((stau_z/tau_z)**2 + (sP/P)**2)
-    sQ_x = (mu / (2*sigma)) * np.abs(F_x / P) * np.sqrt((sF_x/F_x)**2 + (sP/P)**2)
-    sQ_y = (mu / (2*sigma)) * np.abs(F_y / P) * np.sqrt((sF_y/F_y)**2 + (sP/P)**2)
-    stildeQ = - (mu / 2) * (varpi_dot / P) * np.sqrt((svarpi_dot/varpi_dot)**2 + (sP/P)**2)
+    sP_x = (mu / (2*sigma)) * np.abs(F_x / P) * np.sqrt((sF_x/F_x)**2 + (sP/P)**2)
+    sP_y = (mu / (2*sigma)) * np.abs(F_y / P) * np.sqrt((sF_y/F_y)**2 + (sP/P)**2)
+    sQ = - (mu / 2) * (varpi_dot / P) * np.sqrt((svarpi_dot/varpi_dot)**2 + (sP/P)**2)
 
     # Pick requested a_h value by interpolation
     P_val = np.interp(1/a_over_a_h_target, a_h[::-1], P[::-1])
@@ -207,10 +207,10 @@ for q, e, filename in parsed_files:
     tauz_val = np.interp(1/a_over_a_h_target, a_h[::-1], tau_z[::-1])
     H_val = np.interp(1/a_over_a_h_target, a_h[::-1], H[::-1])
     K_val = np.interp(1/a_over_a_h_target, a_h[::-1], K[::-1])
-    Qx_val = np.interp(1/a_over_a_h_target, a_h[::-1], Q_x[::-1])
-    Qy_val = np.interp(1/a_over_a_h_target, a_h[::-1], Q_y[::-1])
+    Px_val = np.interp(1/a_over_a_h_target, a_h[::-1], P_x[::-1])
+    Py_val = np.interp(1/a_over_a_h_target, a_h[::-1], P_y[::-1])
     varpi_dot_val = np.interp(1/a_over_a_h_target, a_h[::-1], varpi_dot[::-1])
-    tildeQ_val = np.interp(1/a_over_a_h_target, a_h[::-1], tildeQ[::-1])
+    Q_val = np.interp(1/a_over_a_h_target, a_h[::-1], Q[::-1])
 
     sP_val = np.interp(1/a_over_a_h_target, a_h[::-1], sP[::-1])
     sFx_val = np.interp(1/a_over_a_h_target, a_h[::-1], sF_x[::-1])
@@ -221,10 +221,10 @@ for q, e, filename in parsed_files:
     stauz_val = np.interp(1/a_over_a_h_target, a_h[::-1], stau_z[::-1])
     sH_val = np.interp(1/a_over_a_h_target, a_h[::-1], sH[::-1])
     sK_val = np.interp(1/a_over_a_h_target, a_h[::-1], sK[::-1])
-    sQx_val = np.interp(1/a_over_a_h_target, a_h[::-1], sQ_x[::-1])
-    sQy_val = np.interp(1/a_over_a_h_target, a_h[::-1], sQ_y[::-1])
+    sPx_val = np.interp(1/a_over_a_h_target, a_h[::-1], sP_x[::-1])
+    sPy_val = np.interp(1/a_over_a_h_target, a_h[::-1], sP_y[::-1])
     svarpi_dot_val = np.interp(1/a_over_a_h_target, a_h[::-1], svarpi_dot[::-1])
-    stildeQ_val = np.interp(1/a_over_a_h_target, a_h[::-1], stildeQ[::-1])
+    sQ_val = np.interp(1/a_over_a_h_target, a_h[::-1], sQ[::-1])
 
     P_grid[ie, iq] = P_val
     Fx_grid[ie, iq] = Fx_val
@@ -235,10 +235,10 @@ for q, e, filename in parsed_files:
     tauz_grid[ie, iq] = tauz_val
     H_grid[ie, iq] = H_val
     K_grid[ie, iq] = K_val
-    Qx_grid[ie, iq] = Qx_val
-    Qy_grid[ie, iq] = Qy_val
+    Px_grid[ie, iq] = Px_val
+    Py_grid[ie, iq] = Py_val
     varpi_dot_grid[ie, iq] = varpi_dot_val
-    tildeQ_grid[ie, iq] = tildeQ_val
+    Q_grid[ie, iq] = Q_val
 
     sP_grid[ie, iq] = sP_val
     sFx_grid[ie, iq] = sFx_val
@@ -249,10 +249,10 @@ for q, e, filename in parsed_files:
     stauz_grid[ie, iq] = stauz_val
     sH_grid[ie, iq] = sH_val
     sK_grid[ie, iq] = sK_val
-    sQx_grid[ie, iq] = sQx_val
-    sQy_grid[ie, iq] = sQy_val
+    sPx_grid[ie, iq] = sPx_val
+    sPy_grid[ie, iq] = sPy_val
     svarpi_dot_grid[ie, iq] = svarpi_dot_val
-    stildeQ_grid[ie, iq] = stildeQ_val
+    sQ_grid[ie, iq] = sQ_val
 
 ###################################################
 # Plotting
@@ -270,11 +270,11 @@ axes[0].grid(True)
 axes[0].set_xlim(-0.5, 1.1)
 axes[0].set_ylim(-0.1, 1)
 
-# Second plot: Q-vector
-axes[1].quiver(Q, E, Qx_grid, Qy_grid, angles='xy', scale_units='xy', scale=1)
+# Second plot: P-vector
+axes[1].quiver(Q, E, Px_grid, Py_grid, angles='xy', scale_units='xy', scale=1)
 axes[1].set_xlabel(r"$q$")
 axes[1].set_ylabel(r"$e$")
-axes[1].set_title(r"Q-vector $(Q_x, Q_y)$ at $a/a_h = 10^{-2}$")
+axes[1].set_title(r"P-vector $(P_x, P_y)$ at $a/a_h = 10^{-2}$")
 axes[1].grid(True)
 axes[1].set_xlim(-0.5, 1.1)
 axes[1].set_ylim(-0.1, 1)
@@ -306,11 +306,11 @@ ax2[2].set_ylabel(r'$\dot\varpi$ [$\rho\sqrt{Ga^3/M}$]')
 ax2[2].legend()
 
 for ie in range(len(e_values)):
-    ax2[3].plot(Q[ie], tildeQ_grid[ie], label=f'e={E[ie,0]}')
-    ax2[3].fill_between(Q[ie], tildeQ_grid[ie]-stildeQ_grid[ie], tildeQ_grid[ie]+stildeQ_grid[ie], alpha=0.3)
+    ax2[3].plot(Q[ie], Q_grid[ie], label=f'e={E[ie,0]}')
+    ax2[3].fill_between(Q[ie], Q_grid[ie]-sQ_grid[ie], Q_grid[ie]+sQ_grid[ie], alpha=0.3)
 ax2[3].set_xscale('log')
 ax2[3].set_xlabel(r'$q$')
-ax2[3].set_ylabel(r'$\tilde Q$')
+ax2[3].set_ylabel(r'$Q$')
 ax2[3].legend()
 
 plt.tight_layout()

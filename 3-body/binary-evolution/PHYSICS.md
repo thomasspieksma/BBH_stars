@@ -71,7 +71,7 @@ This is a vector in the orbital plane. Its lab-frame components are
 $P_x = \hat x \cdot \vec P$ and $P_y = \hat y \cdot \vec P$. The existing
 Python code, however, returns the binary-frame components
 $P_{\hat e} = \hat e \cdot \vec P$ and $P_{\hat n} = \hat n \cdot \vec P$
-(called `Q_x` and `Q_y` in the code). The two sets are related by:
+(called `P_x` and `P_y` in the code). The two sets are related by:
 
 $$P_x = P_{\hat e}\cos\varpi - P_{\hat n}\sin\varpi\,,\qquad P_y = P_{\hat e}\sin\varpi + P_{\hat n}\cos\varpi\,.$$
 
@@ -197,9 +197,9 @@ numerical three-body scattering experiments:
 
 2. **Maxwellian reweighting** (Python): integrate over the velocity
    distribution to obtain the physical rates $(P,\, \vec\tau,\, \vec F,\,
-   \dot\varpi)$ at a given $\sigma$ (equivalently, $a/a_h$) and bulk velocity
+   \dot\varpi)$ at a given $\sigma$ (equivalently, $a/a_h$) and CoM velocity
    $\vec V$. For $\vec V = 0$, the isotropic Maxwellian suffices. For $\vec V
-   \ne 0$, the shifted Maxwellian $f_{\rm 3D}(\vec v - \vec V)$ is expanded in
+   \ne 0$, the shifted Maxwellian $f_{\rm 3D}(\vec v + \vec V)$ is expanded in
    spherical harmonics using the plane-wave formula, and the harmonics data is
    used.
 
@@ -211,12 +211,14 @@ numerical three-body scattering experiments:
 The harmonics files store the spherical-harmonic moments
 $Z_v^{\ell m}$ of each per-particle quantity (energy, velocity, angular
 momentum, $\Delta\varpi$) as a function of the incoming direction, for each
-velocity bin $v$. The shifted-Maxwellian integral is then computed analytically
-using the plane-wave expansion:
+velocity bin $v$. The shifted Maxwellian $f(\vec v + \vec V)$ introduces the
+exponential factor $e^{-\vec v \cdot \vec V / \sigma^2}$, which is expanded
+using the addition theorem:
 
-$$e^{\vec v \cdot \vec V / \sigma^2} = \sum_{\ell m} 4\pi\, i_\ell(vV/\sigma^2)\, Y_{\ell m}(\hat V)\, Y_{\ell m}^*(\hat v)\,,$$
+$$e^{-\vec v \cdot \vec V / \sigma^2} = \sum_{\ell m} 4\pi\, i_\ell(vV/\sigma^2)\, Y_{\ell m}(-\hat V)\, Y_{\ell m}^*(\hat v)\,,$$
 
-where $i_\ell$ is the modified spherical Bessel function of the first kind.
+where $i_\ell$ is the modified spherical Bessel function of the first kind
+and $\vec V$ is the binary centre-of-mass velocity.
 This is implemented in `reweight_from_harmonics()` in
 `3-body/python/weight-Maxwellian-3D-velocity.py`.
 
@@ -269,18 +271,18 @@ same quantities:
 
 | Draft paper | Python code (`weight-Maxwellian-3D-velocity.py`) | Meaning |
 |-------------|--------------------------------------------------|---------|
-| $P_{\hat e}$ | `Q_x` | acceleration parameter, $\hat e$ component |
-| $P_{\hat n}$ | `Q_y` | acceleration parameter, $\hat n$ component |
-| $Q$ | `tildeQ` | dimensionless precession parameter |
+| $P_{\hat e}$ | `P_x` | acceleration parameter, $\hat e$ component |
+| $P_{\hat n}$ | `P_y` | acceleration parameter, $\hat n$ component |
+| $Q$ | `Q` | dimensionless precession parameter |
 | $H$ | `H` | hardening rate |
 | $K$ | `K` | eccentricity growth rate |
 | $\vec F$ | `F` | physical force on the CoM (binary frame) |
 | $\dot\varpi$ | `varpi_dot` | physical precession rate |
 
 The Python functions `reweight()` and `reweight_from_harmonics()` return a
-dictionary with keys `H`, `K`, `Q_x`, `Q_y`, `tildeQ`, `F`, `tau`,
+dictionary with keys `H`, `K`, `P_x`, `P_y`, `Q`, `F`, `tau`,
 `varpi_dot`, and their uncertainties (`sH`, `sK`, etc.). All vector quantities
-(`F`, `tau`, and correspondingly `Q_x`, `Q_y`) are in the binary frame.
+(`F`, `tau`, and correspondingly `P_x`, `P_y`) are in the binary frame.
 
 ---
 
@@ -304,8 +306,8 @@ At each call to the RHS function:
    $V_{\hat n} = -V_x\sin\varpi + V_y\cos\varpi$.
 3. Express both velocity and $\sigma$ in code units.
 4. Call `reweight_from_harmonics()` (or interpolate from a precomputed table)
-   to obtain $H$, $K$, $P_{\hat e}$ (`Q_x`), $P_{\hat n}$ (`Q_y`), $Q$
-   (`tildeQ`).
+   to obtain $H$, $K$, $P_{\hat e}$ (`P_x`), $P_{\hat n}$ (`P_y`), $Q$
+   (`Q`).
 5. If interpolating in $e$: evaluate at the two nearest grid $e$ values and
    interpolate.
 6. Rotate $\vec P$ to the lab frame:

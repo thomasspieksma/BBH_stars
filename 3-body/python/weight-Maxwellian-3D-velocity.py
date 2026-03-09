@@ -4,14 +4,14 @@ weight-Maxwellian-3D-velocity.py
 
 Reads per-particle OR spherical-harmonic-moment binary output from
 main-3D-velocity.cpp and computes Maxwellian-weighted quantities
-(H, K, P, Q, tau, F) for arbitrary bulk velocity V_0 and dispersion sigma.
+(H, K, P, P_x, P_y, Q, tau, F) for arbitrary CoM velocity V and dispersion sigma.
 File format is auto-detected.
 
 Includes:
-  - Isotropic consistency check (V_0=0 vs existing text-file results)
+  - Isotropic consistency check (V=0 vs existing text-file results)
   - Harmonics vs per-particle consistency check
-  - Chandrasekhar dynamical friction check (large V_0)
-  - Plotting of H, K, Q, tau as functions of a/a_h for multiple V_0
+  - Chandrasekhar dynamical friction check (large V)
+  - Plotting of H, K, Q, P_x, P_y, tau as functions of a/a_h for multiple V
 
 Usage:
     python weight-Maxwellian-3D-velocity.py particles_q=0.2_e=0.6.bin
@@ -23,6 +23,7 @@ Usage:
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.special import erf, lpmv
+from scipy.integrate import quad
 import struct
 import argparse
 
@@ -148,27 +149,30 @@ def trapezoidal_weights(v_values):
 
 # ── Reweighting engine ───────────────────────────────────────────────────────
 
-def reweight(meta, bins, V0, sigma, rho=1.0):
+def reweight(meta, bins, V, sigma, rho=1.0):
     """
-    Compute Maxwellian-weighted integrals for given bulk velocity V0 and
+    Compute Maxwellian-weighted integrals for given CoM velocity V and
     velocity dispersion sigma.
 
     The integral being estimated for a generic per-particle quantity X is:
 
-        I_X = -rho * int d^3v  f_3D(v - V0, sigma) * v * pi*b_max^2(v) * X(v)
+        I_X = -rho * int d^3v  f_3D(v + V, sigma) * v * pi*b_max^2(v) * X(v)
+
+    where v is the velocity of the incoming star in the binary rest frame
+    and V is the binary centre-of-mass velocity in the lab frame.
 
     Split as: trapezoidal in |v| over the v-grid, MC over directions using the
     N random directions per v-bin.  See plan for derivation.
 
-    Returns dict with P, F, tau (and H, K, Q derived from them), plus
-    uncertainties sP, sF, stau, sH, sK, sQ_x, sQ_y.
+    Returns dict with P, F, tau (and H, K, P_x, P_y, Q derived from them),
+    plus uncertainties sP, sF, stau, sH, sK, sP_x, sP_y, sQ.
     """
     q      = meta['q']
     e_ecc  = meta['e']
     rp_max = meta['rp_max']
     mu     = q / (1 + q)**2
 
-    V0 = np.asarray(V0, dtype=np.float64)
+    V = np.asarray(V, dtype=np.float64)
     v_values = np.array([b['v_inf'] for b in bins])
     dv = trapezoidal_weights(v_values)
 
@@ -189,7 +193,7 @@ def reweight(meta, bins, V0, sigma, rho=1.0):
         bmax  = rp_max * np.sqrt(1 + 2 / (vj**2 * rp_max))
         A_j   = 4 * np.pi**2 * vj**3 * bmax**2 * dv[j]
 
-        delta = b['v_in'] - V0[np.newaxis, :]
+        delta = b['v_in'] + V[np.newaxis, :]
         f3d   = norm_f * np.exp(-np.sum(delta**2, axis=1) * inv_2s2)
 
         wE = f3d * b['dE']
@@ -232,27 +236,27 @@ def reweight(meta, bins, V0, sigma, rho=1.0):
     else:
         K = np.nan; sK = np.nan
 
-    def _Q(Fk, sFk):
+    def _P_comp(Fk, sFk):
         if abs(P) > 0 and abs(Fk) > 1e-300:
-            Qval = -(mu / (2 * sigma)) * Fk / P
-            sQ   = (mu / (2 * sigma)) * _safe_ratio_err(Fk, sFk, P, sP)
-            return Qval, sQ
+            Pval = -(mu / (2 * sigma)) * Fk / P
+            sPval = (mu / (2 * sigma)) * _safe_ratio_err(Fk, sFk, P, sP)
+            return Pval, sPval
         return np.nan, np.nan
 
-    Q_x, sQ_x = _Q(F[0], sF[0])
-    Q_y, sQ_y = _Q(F[1], sF[1])
+    P_x, sP_x = _P_comp(F[0], sF[0])
+    P_y, sP_y = _P_comp(F[1], sF[1])
 
     if abs(P) > 0 and abs(varpi_dot) > 1e-300:
-        tildeQ = -(mu / 2) * varpi_dot / P
-        stildeQ = (mu / 2) * _safe_ratio_err(varpi_dot, svarpi_dot, P, sP)
+        Q = -(mu / 2) * varpi_dot / P
+        sQ = (mu / 2) * _safe_ratio_err(varpi_dot, svarpi_dot, P, sP)
     else:
-        tildeQ = np.nan; stildeQ = np.nan
+        Q = np.nan; sQ = np.nan
 
     return dict(
         P=P, sP=sP, F=F, sF=sF, tau=tau, stau=stau,
-        H=H, sH=sH, K=K, sK=sK, Q_x=Q_x, sQ_x=sQ_x, Q_y=Q_y, sQ_y=sQ_y,
+        H=H, sH=sH, K=K, sK=sK, P_x=P_x, sP_x=sP_x, P_y=P_y, sP_y=sP_y,
         varpi_dot=varpi_dot, svarpi_dot=svarpi_dot,
-        tildeQ=tildeQ, stildeQ=stildeQ,
+        Q=Q, sQ=sQ,
     )
 
 # ── Real spherical harmonics (matches C++ compute_real_Ylm exactly) ──────────
@@ -300,14 +304,17 @@ def real_Ylm_all(cos_theta, phi, l_max):
 
 # ── SH-based reweighting engine ──────────────────────────────────────────────
 
-def reweight_from_harmonics(meta, harm_bins, V0, sigma, rho=1.0):
+def reweight_from_harmonics(meta, harm_bins, V, sigma, rho=1.0):
     """Reconstruct Maxwellian-weighted integrals from SH moment data.
 
-    Uses the plane-wave / addition-theorem expansion:
-        exp(alpha * n.V0hat) = 4pi sum_{lm} i_l(alpha) Y_lm(V0hat) Y_lm(n)
-    where i_l are modified spherical Bessel functions of the first kind.
+    V is the binary centre-of-mass velocity (in code units).  The shifted
+    Maxwellian f(v + V) introduces the exponential factor exp(-v.V/sigma^2),
+    which is expanded using the addition theorem:
+        exp(-alpha * n.Vhat) = 4pi sum_{lm} i_l(alpha) Y_lm(-Vhat) Y_lm(n)
+    where i_l are modified spherical Bessel functions of the first kind
+    and alpha = v|V|/sigma^2.
 
-    Returns the same dict as reweight() (P, F, tau, H, K, Q, uncertainties).
+    Returns the same dict as reweight() (P, F, tau, H, K, P_x, P_y, Q, uncertainties).
     """
     from scipy.special import ive
 
@@ -318,18 +325,18 @@ def reweight_from_harmonics(meta, harm_bins, V0, sigma, rho=1.0):
     mu     = q / (1 + q)**2
     n_sh   = (l_max + 1)**2
 
-    V0 = np.asarray(V0, dtype=np.float64)
-    V0_mag = np.linalg.norm(V0)
+    V = np.asarray(V, dtype=np.float64)
+    V_mag = np.linalg.norm(V)
 
     v_values = np.array([b['v_inf'] for b in harm_bins])
     dv = trapezoidal_weights(v_values)
 
-    if V0_mag > 1e-30:
-        V0hat = V0 / V0_mag
-        Ylm_V0 = real_Ylm_all(V0hat[2], np.arctan2(V0hat[1], V0hat[0]), l_max)
+    if V_mag > 1e-30:
+        neg_Vhat = -V / V_mag
+        Ylm_negV = real_Ylm_all(neg_Vhat[2], np.arctan2(neg_Vhat[1], neg_Vhat[0]), l_max)
     else:
-        Ylm_V0 = np.zeros(n_sh)
-        Ylm_V0[0] = 1.0 / np.sqrt(4 * np.pi)
+        Ylm_negV = np.zeros(n_sh)
+        Ylm_negV[0] = 1.0 / np.sqrt(4 * np.pi)
 
     # l-index for each flat SH index (precompute once)
     l_idx = np.empty(n_sh, dtype=int)
@@ -353,7 +360,7 @@ def reweight_from_harmonics(meta, harm_bins, V0, sigma, rho=1.0):
         bmax = rp_max * np.sqrt(1 + 2 / (vj**2 * rp_max))
         A_j  = 4 * np.pi**2 * vj**3 * bmax**2 * dv[j]
 
-        alpha = vj * V0_mag * inv_s2
+        alpha = vj * V_mag * inv_s2
 
         # Scaled modified spherical Bessel: exp(-x)*i_l(x) = sqrt(pi/(2x)) * ive(l+0.5, x)
         if alpha > 1e-30:
@@ -364,11 +371,11 @@ def reweight_from_harmonics(meta, harm_bins, V0, sigma, rho=1.0):
             s1 = np.zeros(l_max + 1); s1[0] = 1.0
             s2 = np.zeros(l_max + 1); s2[0] = 1.0
 
-        G1 = norm1 * np.exp(-(vj - V0_mag)**2 / (2 * sigma**2))
-        G2 = norm1**2 * np.exp(-(vj - V0_mag)**2 / sigma**2)
+        G1 = norm1 * np.exp(-(vj - V_mag)**2 / (2 * sigma**2))
+        G2 = norm1**2 * np.exp(-(vj - V_mag)**2 / sigma**2)
 
-        w1 = s1[l_idx] * Ylm_V0          # shape (n_sh,)
-        w2 = s2[l_idx] * Ylm_V0
+        w1 = s1[l_idx] * Ylm_negV          # shape (n_sh,)
+        w2 = s2[l_idx] * Ylm_negV
 
         fourpi = 4 * np.pi
         M  = b['M']    # (8, n_sh)
@@ -414,27 +421,27 @@ def reweight_from_harmonics(meta, harm_bins, V0, sigma, rho=1.0):
     else:
         K = np.nan; sK = np.nan
 
-    def _Q(Fk, sFk):
+    def _P_comp(Fk, sFk):
         if abs(P) > 0 and abs(Fk) > 1e-300:
-            Qval = -(mu / (2 * sigma)) * Fk / P
-            sQ   = (mu / (2 * sigma)) * _safe_ratio_err(Fk, sFk, P, sP)
-            return Qval, sQ
+            Pval = -(mu / (2 * sigma)) * Fk / P
+            sPval = (mu / (2 * sigma)) * _safe_ratio_err(Fk, sFk, P, sP)
+            return Pval, sPval
         return np.nan, np.nan
 
-    Q_x, sQ_x = _Q(F[0], sF[0])
-    Q_y, sQ_y = _Q(F[1], sF[1])
+    P_x, sP_x = _P_comp(F[0], sF[0])
+    P_y, sP_y = _P_comp(F[1], sF[1])
 
     if abs(P) > 0 and abs(varpi_dot) > 1e-300:
-        tildeQ = -(mu / 2) * varpi_dot / P
-        stildeQ = (mu / 2) * _safe_ratio_err(varpi_dot, svarpi_dot, P, sP)
+        Q = -(mu / 2) * varpi_dot / P
+        sQ = (mu / 2) * _safe_ratio_err(varpi_dot, svarpi_dot, P, sP)
     else:
-        tildeQ = np.nan; stildeQ = np.nan
+        Q = np.nan; sQ = np.nan
 
     return dict(
         P=P, sP=sP, F=F, sF=sF, tau=tau, stau=stau,
-        H=H, sH=sH, K=K, sK=sK, Q_x=Q_x, sQ_x=sQ_x, Q_y=Q_y, sQ_y=sQ_y,
+        H=H, sH=sH, K=K, sK=sK, P_x=P_x, sP_x=sP_x, P_y=P_y, sP_y=sP_y,
         varpi_dot=varpi_dot, svarpi_dot=svarpi_dot,
-        tildeQ=tildeQ, stildeQ=stildeQ,
+        Q=Q, sQ=sQ,
     )
 
 # ── Isotropic check via original text-file method ────────────────────────────
@@ -522,27 +529,78 @@ def isotropic_from_text(text_file, q, e, rp_max, rho=1.0):
 
     K  = -(1 - e**2) / (2 * e) + np.sqrt(1 - e**2) / (2 * e) * tz / P
     sK = np.sqrt(1 - e**2) / (2 * e) * np.abs(tz / P) * np.sqrt((stz / tz)**2 + (sP / P)**2)
-    tildeQ = -(mu / 2) * varpi_dot_int / P
-    stildeQ = -(mu / 2) * (varpi_dot_int / P) * np.sqrt((svarpi_dot_int / varpi_dot_int)**2 + (sP / P)**2)
+    Q = -(mu / 2) * varpi_dot_int / P
+    sQ = -(mu / 2) * (varpi_dot_int / P) * np.sqrt((svarpi_dot_int / varpi_dot_int)**2 + (sP / P)**2)
 
     return dict(a_h=a_h, sigma=sigma,
                 P=P, sP=sP, H=H, sH=sH, K=K, sK=sK,
                 F=np.array([Fx, Fy, Fz]), sF=np.array([sFx, sFy, sFz]),
                 tau=np.array([tx, ty, tz]), stau=np.array([stx, sty, stz]),
                 varpi_dot=varpi_dot_int, svarpi_dot=svarpi_dot_int,
-                tildeQ=tildeQ, stildeQ=stildeQ)
+                Q=Q, sQ=sQ)
 
 # ── Chandrasekhar dynamical friction ─────────────────────────────────────────
 
-def chandrasekhar_F(V0_mag, sigma, rho, ln_Lambda):
-    """Magnitude of Chandrasekhar dynamical friction force on the binary.
+def chandrasekhar_F(V_mag, sigma, rho, ln_Lambda):
+    """Chandrasekhar dynamical friction force on the binary.
 
-    Returns the force component along V_0 (positive = dragging the binary
-    in the direction of the stellar flow).  Units: G=M=1.
+    Returns the force component along V_hat (negative = deceleration),
+    where V is the binary centre-of-mass velocity.  Units: G=M=1.
     """
-    X = V0_mag / (np.sqrt(2) * sigma)
+    X = V_mag / (np.sqrt(2) * sigma)
     bracket = erf(X) - 2 * X / np.sqrt(np.pi) * np.exp(-X**2)
-    return 4 * np.pi * rho * ln_Lambda / V0_mag**2 * bracket
+    return -4 * np.pi * rho * ln_Lambda / V_mag**2 * bracket
+
+
+def _ln_lambda(u_tilde, xi, q, r_outer_ah):
+    """Coulomb logarithm ln(r_outer / b_max) as a function of u/sigma.
+
+    In dimensionless variables (lengths in a_h, velocities in sigma):
+        b_max / a_h = 5 exp(-xi) sqrt(1 + 8(1+q)^2 exp(xi) / (5 q u_tilde^2))
+    """
+    a_over_ah = np.exp(-xi)
+    ratio = 8.0 * (1.0 + q)**2 * np.exp(xi) / (5.0 * q * u_tilde**2)
+    bmax_ah = 5.0 * a_over_ah * np.sqrt(1.0 + ratio)
+    lnL = np.log(r_outer_ah / bmax_ah)
+    if lnL < 0.0:
+        return 0.0
+    return lnL
+
+
+def chandrasekhar_decel_integral(V_tilde, xi, q, r_outer_ah):
+    r"""Full Chandrasekhar integral with velocity-dependent ln Lambda.
+
+    Returns the dimensionless scalar *J* such that the Chandrasekhar
+    force vector in code units (G=M=a=1) is
+
+        F_Ch = (4 pi rho / sigma^2) * J * V_hat
+
+    where V_hat is the CoM velocity direction.
+    *J* is negative (deceleration).
+    """
+    if V_tilde < 1e-15:
+        return 0.0
+
+    def integrand(u):
+        if u < 1e-30:
+            return 0.0
+        lnL = _ln_lambda(u, xi, q, r_outer_ah)
+        if lnL <= 0.0:
+            return 0.0
+        alpha = u * V_tilde
+        if alpha < 1e-4:
+            kernel_exp = np.exp(-(u**2 + V_tilde**2) / 2.0) * (
+                -alpha**3 / 3.0 - alpha**5 / 30.0)
+        else:
+            e_minus = np.exp(-0.5 * (u - V_tilde)**2)
+            e_plus = np.exp(-0.5 * (u + V_tilde)**2)
+            kernel_exp = 0.5 * ((1.0 - alpha) * e_minus
+                                - (1.0 + alpha) * e_plus)
+        return lnL * 2.0 * kernel_exp / alpha**2
+
+    J, _ = quad(integrand, 0.0, np.inf, limit=200)
+    J /= np.sqrt(2.0 * np.pi)
+    return J
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 
@@ -564,16 +622,16 @@ if __name__ == '__main__':
     ftype = detect_file_type(args.binary_file)
     if ftype == 'harmonics':
         meta, data_bins = read_harmonics(args.binary_file)
-        def _reweight(V0, sig):
-            return reweight_from_harmonics(meta, data_bins, V0, sig, rho)
+        def _reweight(V, sig):
+            return reweight_from_harmonics(meta, data_bins, V, sig, rho)
         total_particles = sum(b['n_esc'] for b in data_bins)
         print(f"Loaded harmonics file: {args.binary_file} "
               f"(l_max={meta['l_max']}, N_v={len(data_bins)}, "
               f"N_per_v={meta['n_per_v']}, total escaped={total_particles})")
     else:
         meta, data_bins = read_binary(args.binary_file)
-        def _reweight(V0, sig):
-            return reweight(meta, data_bins, V0, sig, rho)
+        def _reweight(V, sig):
+            return reweight(meta, data_bins, V, sig, rho)
         total_particles = sum(b['n_esc'] for b in data_bins)
         print(f"Loaded per-particle file: {args.binary_file} "
               f"(N_v={len(data_bins)}, N_per_v={meta['n_per_v']}, "
@@ -593,7 +651,7 @@ if __name__ == '__main__':
 
     # ── Isotropic consistency check ──
     if args.check_iso:
-        print("\n=== Isotropic consistency check (V_0 = 0) ===")
+        print("\n=== Isotropic consistency check (V = 0) ===")
         txt = isotropic_from_text(args.check_iso, q, e_ecc, rp_max, rho)
 
         H_rw  = np.empty(N_ah)
@@ -615,7 +673,7 @@ if __name__ == '__main__':
         fig_iso, ax_iso = plt.subplots(1, 2, figsize=(12, 5))
         ax_iso[0].plot(1/a_h, H_txt, 'k-', label='text-file (original)')
         ax_iso[0].fill_between(1/a_h, H_txt - sH_txt, H_txt + sH_txt, color='k', alpha=0.15)
-        ax_iso[0].plot(1/a_h, H_rw, 'r--', label=f'{ftype} V$_0$=0')
+        ax_iso[0].plot(1/a_h, H_rw, 'r--', label=f'{ftype} $V$=0')
         ax_iso[0].fill_between(1/a_h, H_rw - sH_rw, H_rw + sH_rw, color='r', alpha=0.15)
         ax_iso[0].set_xscale('log')
         ax_iso[0].set_xlabel(r'$a/a_h$')
@@ -642,22 +700,22 @@ if __name__ == '__main__':
         else:
             meta_h, bins_h = meta, data_bins
 
-        check_V0_configs = []
+        check_V_configs = []
         test_dirs = {'z': np.array([0., 0., 1.]), 'x': np.array([1., 0., 0.]),
                      'y': np.array([0., 1., 0.])}
         for dname, dhat in test_dirs.items():
-            for V0r in [-2, -1, 0, 1, 2]:
-                check_V0_configs.append((f'{dname},{V0r:+d}', V0r, dhat))
+            for Vr in [-2, -1, 0, 1, 2]:
+                check_V_configs.append((f'{dname},{Vr:+d}', Vr, dhat))
 
         test_sigma_indices = [N_ah // 4, N_ah // 2, 3 * N_ah // 4]
 
         max_rel = {k: 0.0 for k in ['H', 'K', 'F', 'tau']}
-        for label, V0r, dhat in check_V0_configs:
+        for label, Vr, dhat in check_V_configs:
             for si in test_sigma_indices:
                 sig = sigma[si]
-                V0 = V0r * sig * dhat
-                r_pp = reweight(meta_pp, bins_pp, V0, sig, rho)
-                r_sh = reweight_from_harmonics(meta_h, bins_h, V0, sig, rho)
+                V = Vr * sig * dhat
+                r_pp = reweight(meta_pp, bins_pp, V, sig, rho)
+                r_sh = reweight_from_harmonics(meta_h, bins_h, V, sig, rho)
 
                 for key in ['H', 'K']:
                     if abs(r_pp[key]) > 1e-300:
@@ -671,12 +729,15 @@ if __name__ == '__main__':
                         rel = abs(r_sh['tau'][k] - r_pp['tau'][k]) / (abs(r_pp['tau'][k]) + 1e-300)
                         max_rel['tau'] = max(max_rel['tau'], rel)
 
-        print("  Max relative deviation (SH vs per-particle) over all V0 configs:")
+        print("  Max relative deviation (SH vs per-particle) over all V configs:")
         for k, v in max_rel.items():
             print(f"    {k:4s}: {v:.4e}")
 
-    # ── Compute H, K, tau, F for several signed V_0 directions ──
-    V0_ratios = [-2, -1, 0, 1, 2]
+    # ── Chandrasekhar outer cutoff (influence radius in a_h units) ──
+    r_outer_ah = 4.0 * (1.0 + q)**2 / q
+
+    # ── Compute H, K, tau, F for several signed V directions ──
+    V_ratios = [-2, -1, 0, 1, 2]
     directions = {
         r'$\hat z$ (perp. to binary)':          np.array([0., 0., 1.]),
         r'$\hat x$ (eccentricity)':              np.array([1., 0., 0.]),
@@ -686,10 +747,10 @@ if __name__ == '__main__':
     results = {}
     first_dir = list(directions.keys())[0]
     for dir_label, dir_hat in directions.items():
-        for V0r in V0_ratios:
-            key = (dir_label, V0r)
+        for Vr in V_ratios:
+            key = (dir_label, Vr)
 
-            if V0r == 0 and dir_label != first_dir:
+            if Vr == 0 and dir_label != first_dir:
                 results[key] = results[(first_dir, 0)]
                 continue
 
@@ -703,12 +764,13 @@ if __name__ == '__main__':
             stau_arr   = np.empty((N_ah, 3))
             varpi_dot_arr  = np.empty(N_ah)
             svarpi_dot_arr = np.empty(N_ah)
-            tildeQ_arr     = np.empty(N_ah)
-            stildeQ_arr    = np.empty(N_ah)
+            Q_arr          = np.empty(N_ah)
+            sQ_arr         = np.empty(N_ah)
+            F_total_arr    = np.empty((N_ah, 3))
 
             for i, sig in enumerate(sigma):
-                V0 = V0r * sig * dir_hat
-                r = _reweight(V0, sig)
+                V = Vr * sig * dir_hat
+                r = _reweight(V, sig)
                 H_arr[i]      = r['H']
                 sH_arr[i]     = r['sH']
                 K_arr[i]      = r['K']
@@ -719,32 +781,89 @@ if __name__ == '__main__':
                 stau_arr[i]   = r['stau']
                 varpi_dot_arr[i]  = r['varpi_dot']
                 svarpi_dot_arr[i] = r['svarpi_dot']
-                tildeQ_arr[i]     = r['tildeQ']
-                stildeQ_arr[i]    = r['stildeQ']
+                Q_arr[i]          = r['Q']
+                sQ_arr[i]         = r['sQ']
+
+                V_tilde = abs(Vr)
+                if V_tilde > 1e-15:
+                    xi_i = np.log(a_h[i])
+                    J = chandrasekhar_decel_integral(V_tilde, xi_i, q,
+                                                    r_outer_ah)
+                    V_hat = V / (V_tilde * sig)
+                    F_Ch = (4.0 * np.pi * rho / sig**2) * J * V_hat
+                else:
+                    F_Ch = np.zeros(3)
+                F_total_arr[i] = r['F'] + F_Ch
 
             results[key] = dict(
                 H=H_arr, sH=sH_arr, K=K_arr, sK=sK_arr,
                 F=F_arr, sF=sF_arr, tau=tau_arr, stau=stau_arr,
                 varpi_dot=varpi_dot_arr, svarpi_dot=svarpi_dot_arr,
-                tildeQ=tildeQ_arr, stildeQ=stildeQ_arr,
+                Q=Q_arr, sQ=sQ_arr,
+                F_total=F_total_arr,
             )
-            print(f"  Computed: V_0/sigma={V0r:+d}, dir={dir_label}")
+            print(f"  Computed: V/sigma={Vr:+d}, dir={dir_label}")
 
-    def _label(V0r, dir_label):
-        if V0r == 0:
-            return '$V_0=0$'
-        return f'$V_0/\\sigma={V0r:+d}$, {dir_label}'
+    # ── Compute for general-direction V/sigma vectors ──
+    cart_configs = [
+        (np.array([1., 2., 3.]),  r'$V/\sigma=(1,2,3)$'),
+        (np.array([1., 2., -3.]), r'$V/\sigma=(1,2,\!-\!3)$'),
+    ]
+    cart_results = []
+    for V_cart, cart_label in cart_configs:
+        V_cart_mag = np.linalg.norm(V_cart)
+        H_c      = np.empty(N_ah);  sH_c     = np.empty(N_ah)
+        K_c      = np.empty(N_ah);  sK_c     = np.empty(N_ah)
+        F_c      = np.empty((N_ah, 3));  sF_c   = np.empty((N_ah, 3))
+        tau_c    = np.empty((N_ah, 3));  stau_c = np.empty((N_ah, 3))
+        vd_c     = np.empty(N_ah);  svd_c    = np.empty(N_ah)
+        Q_c      = np.empty(N_ah);  sQ_c     = np.empty(N_ah)
+        Ftot_c   = np.empty((N_ah, 3))
+
+        for i, sig in enumerate(sigma):
+            V = sig * V_cart
+            r = _reweight(V, sig)
+            H_c[i]    = r['H'];      sH_c[i]   = r['sH']
+            K_c[i]    = r['K'];      sK_c[i]   = r['sK']
+            F_c[i]    = r['F'];      sF_c[i]   = r['sF']
+            tau_c[i]  = r['tau'];    stau_c[i] = r['stau']
+            vd_c[i]   = r['varpi_dot'];  svd_c[i] = r['svarpi_dot']
+            Q_c[i]    = r['Q'];      sQ_c[i]   = r['sQ']
+
+            xi_i = np.log(a_h[i])
+            J = chandrasekhar_decel_integral(V_cart_mag, xi_i, q, r_outer_ah)
+            V_hat = V_cart / V_cart_mag
+            F_Ch = (4.0 * np.pi * rho / sig**2) * J * V_hat
+            Ftot_c[i] = r['F'] + F_Ch
+
+        cart_results.append(dict(
+            label=cart_label,
+            H=H_c, sH=sH_c, K=K_c, sK=sK_c,
+            F=F_c, sF=sF_c, tau=tau_c, stau=stau_c,
+            varpi_dot=vd_c, svarpi_dot=svd_c,
+            Q=Q_c, sQ=sQ_c, F_total=Ftot_c,
+        ))
+        print(f"  Computed: {cart_label}")
+
+    def _label(Vr, dir_label):
+        if Vr == 0:
+            return '$V=0$'
+        return f'$V/\\sigma={Vr:+d}$, {dir_label}'
 
     # ── Plot H(a/a_h) ──
     fig_H, ax_H = plt.subplots(figsize=(7, 5))
     seen_zero = False
-    for (dir_label, V0r), res in results.items():
-        if V0r == 0:
+    for (dir_label, Vr), res in results.items():
+        if Vr == 0:
             if seen_zero: continue
             seen_zero = True
-        ax_H.plot(1/a_h, res['H'], label=_label(V0r, dir_label))
+        ax_H.plot(1/a_h, res['H'], label=_label(Vr, dir_label))
         ax_H.fill_between(1/a_h, res['H'] - res['sH'],
                           res['H'] + res['sH'], alpha=0.08)
+    for rc in cart_results:
+        ax_H.plot(1/a_h, rc['H'], '--', label=rc['label'])
+        ax_H.fill_between(1/a_h, rc['H'] - rc['sH'],
+                          rc['H'] + rc['sH'], alpha=0.08)
     ax_H.set_xscale('log')
     ax_H.set_xlabel(r'$a/a_h$')
     ax_H.set_ylabel(r'$H$')
@@ -755,13 +874,17 @@ if __name__ == '__main__':
     # ── Plot K(a/a_h) ──
     fig_K, ax_K = plt.subplots(figsize=(7, 5))
     seen_zero = False
-    for (dir_label, V0r), res in results.items():
-        if V0r == 0:
+    for (dir_label, Vr), res in results.items():
+        if Vr == 0:
             if seen_zero: continue
             seen_zero = True
-        ax_K.plot(1/a_h, res['K'], label=_label(V0r, dir_label))
+        ax_K.plot(1/a_h, res['K'], label=_label(Vr, dir_label))
         ax_K.fill_between(1/a_h, res['K'] - res['sK'],
                           res['K'] + res['sK'], alpha=0.08)
+    for rc in cart_results:
+        ax_K.plot(1/a_h, rc['K'], '--', label=rc['label'])
+        ax_K.fill_between(1/a_h, rc['K'] - rc['sK'],
+                          rc['K'] + rc['sK'], alpha=0.08)
     ax_K.set_xscale('log')
     ax_K.set_xlabel(r'$a/a_h$')
     ax_K.set_ylabel(r'$K$')
@@ -772,13 +895,17 @@ if __name__ == '__main__':
     # ── Plot varpi_dot(a/a_h) ──
     fig_varpi, ax_varpi = plt.subplots(figsize=(7, 5))
     seen_zero = False
-    for (dir_label, V0r), res in results.items():
-        if V0r == 0:
+    for (dir_label, Vr), res in results.items():
+        if Vr == 0:
             if seen_zero: continue
             seen_zero = True
-        ax_varpi.plot(1/a_h, res['varpi_dot'], label=_label(V0r, dir_label))
+        ax_varpi.plot(1/a_h, res['varpi_dot'], label=_label(Vr, dir_label))
         ax_varpi.fill_between(1/a_h, res['varpi_dot'] - res['svarpi_dot'],
                               res['varpi_dot'] + res['svarpi_dot'], alpha=0.08)
+    for rc in cart_results:
+        ax_varpi.plot(1/a_h, rc['varpi_dot'], '--', label=rc['label'])
+        ax_varpi.fill_between(1/a_h, rc['varpi_dot'] - rc['svarpi_dot'],
+                              rc['varpi_dot'] + rc['svarpi_dot'], alpha=0.08)
     ax_varpi.set_xscale('log')
     ax_varpi.set_xlabel(r'$a/a_h$')
     ax_varpi.set_ylabel(r'$\dot\varpi$ [$\rho\sqrt{Ga^3/M}$]')
@@ -786,39 +913,62 @@ if __name__ == '__main__':
     ax_varpi.set_title(f'Precession rate (q={q}, e={e_ecc})')
     fig_varpi.tight_layout()
 
-    # ── Plot tildeQ(a/a_h) ──
+    # ── Plot Q(a/a_h) ──
     fig_tQ, ax_tQ = plt.subplots(figsize=(7, 5))
     seen_zero = False
-    for (dir_label, V0r), res in results.items():
-        if V0r == 0:
+    for (dir_label, Vr), res in results.items():
+        if Vr == 0:
             if seen_zero: continue
             seen_zero = True
-        ax_tQ.plot(1/a_h, res['tildeQ'], label=_label(V0r, dir_label))
-        ax_tQ.fill_between(1/a_h, res['tildeQ'] - res['stildeQ'],
-                           res['tildeQ'] + res['stildeQ'], alpha=0.08)
+        ax_tQ.plot(1/a_h, res['Q'], label=_label(Vr, dir_label))
+        ax_tQ.fill_between(1/a_h, res['Q'] - res['sQ'],
+                           res['Q'] + res['sQ'], alpha=0.08)
+    for rc in cart_results:
+        ax_tQ.plot(1/a_h, rc['Q'], '--', label=rc['label'])
+        ax_tQ.fill_between(1/a_h, rc['Q'] - rc['sQ'],
+                           rc['Q'] + rc['sQ'], alpha=0.08)
     ax_tQ.set_xscale('log')
     ax_tQ.set_xlabel(r'$a/a_h$')
-    ax_tQ.set_ylabel(r'$\tilde Q$')
+    ax_tQ.set_ylabel(r'$Q$')
     ax_tQ.legend(fontsize=7)
-    ax_tQ.set_title(f'$\\tilde Q$ (q={q}, e={e_ecc})')
+    ax_tQ.set_title(f'$Q$ (q={q}, e={e_ecc})')
     fig_tQ.tight_layout()
 
-    # ── Plot signed F components: one figure per V_0 direction ──
+    # ── Plot signed F components: one figure per V direction ──
     comp_names = ['x', 'y', 'z']
     for dir_label, dir_hat in directions.items():
         fig_F, axes_F = plt.subplots(1, 3, figsize=(16, 5))
         seen_zero = False
-        for V0r in V0_ratios:
-            res = results[(dir_label, V0r)]
-            if V0r == 0:
+        line_colors = {}
+        for Vr in V_ratios:
+            res = results[(dir_label, Vr)]
+            if Vr == 0:
                 if seen_zero: continue
                 seen_zero = True
-            lbl = _label(V0r, dir_label)
+            lbl = _label(Vr, dir_label)
             for k, ax in enumerate(axes_F):
                 Fk  = res['F'][:, k]
                 sFk = res['sF'][:, k]
-                ax.plot(1/a_h, Fk, label=lbl)
+                line, = ax.plot(1/a_h, Fk, label=lbl)
                 ax.fill_between(1/a_h, Fk - sFk, Fk + sFk, alpha=0.08)
+                if k == 0:
+                    line_colors[Vr] = line.get_color()
+        for Vr in V_ratios:
+            if Vr == 0:
+                continue
+            res = results[(dir_label, Vr)]
+            lbl_tot = _label(Vr, dir_label) + ' +Ch'
+            for k, ax in enumerate(axes_F):
+                ax.plot(1/a_h, res['F_total'][:, k], '--',
+                        color=line_colors[Vr], label=lbl_tot if k == 0 else None)
+        for rc in cart_results:
+            for k, ax in enumerate(axes_F):
+                Fk_c  = rc['F'][:, k]
+                sFk_c = rc['sF'][:, k]
+                ax.plot(1/a_h, Fk_c, '--',
+                        label=rc['label'] if k == 0 else None)
+                ax.fill_between(1/a_h, Fk_c - sFk_c, Fk_c + sFk_c,
+                                alpha=0.08)
         for k, ax in enumerate(axes_F):
             ax.axhline(0, color='grey', lw=0.5)
             ax.set_xscale('log')
@@ -826,25 +976,33 @@ if __name__ == '__main__':
             ax.set_ylabel(f'$F_{{{comp_names[k]}}}$ [$GM\\rho a$]')
         axes_F[0].legend(fontsize=6)
         fig_F.suptitle(
-            f'Signed force components, $V_0$ along {dir_label} (q={q}, e={e_ecc})',
+            f'Signed force components, $V$ along {dir_label} (q={q}, e={e_ecc})',
             fontsize=11)
         fig_F.tight_layout()
 
-    # ── Plot signed tau components: one figure per V_0 direction ──
+    # ── Plot signed tau components: one figure per V direction ──
     for dir_label, dir_hat in directions.items():
         fig_tau, axes_tau = plt.subplots(1, 3, figsize=(16, 5))
         seen_zero = False
-        for V0r in V0_ratios:
-            res = results[(dir_label, V0r)]
-            if V0r == 0:
+        for Vr in V_ratios:
+            res = results[(dir_label, Vr)]
+            if Vr == 0:
                 if seen_zero: continue
                 seen_zero = True
-            lbl = _label(V0r, dir_label)
+            lbl = _label(Vr, dir_label)
             for k, ax in enumerate(axes_tau):
                 tk  = res['tau'][:, k]
                 stk = res['stau'][:, k]
                 ax.plot(1/a_h, tk, label=lbl)
                 ax.fill_between(1/a_h, tk - stk, tk + stk, alpha=0.08)
+        for rc in cart_results:
+            for k, ax in enumerate(axes_tau):
+                tk_c  = rc['tau'][:, k]
+                stk_c = rc['stau'][:, k]
+                ax.plot(1/a_h, tk_c, '--',
+                        label=rc['label'] if k == 0 else None)
+                ax.fill_between(1/a_h, tk_c - stk_c, tk_c + stk_c,
+                                alpha=0.08)
         for k, ax in enumerate(axes_tau):
             ax.axhline(0, color='grey', lw=0.5)
             ax.set_xscale('log')
@@ -852,18 +1010,18 @@ if __name__ == '__main__':
             ax.set_ylabel(f'$\\tau_{{{comp_names[k]}}}$ [$GM\\rho a^2$]')
         axes_tau[0].legend(fontsize=6)
         fig_tau.suptitle(
-            f'Signed torque components, $V_0$ along {dir_label} (q={q}, e={e_ecc})',
+            f'Signed torque components, $V$ along {dir_label} (q={q}, e={e_ecc})',
             fontsize=11)
         fig_tau.tight_layout()
 
-    # ── Chandrasekhar check: F_parallel vs |V_0|/sigma, two directions ─────
+    # ── Chandrasekhar check: |F_parallel| vs |V|/sigma ─────
     ch_directions = {
         r'$\hat z$ (perp.)':    np.array([0., 0., 1.]),
         r'$\hat x$ (ecc.)':     np.array([1., 0., 0.]),
         r'$\hat y$ (in-plane)': np.array([0., 1., 0.]),
     }
     test_ah_indices = [N_ah // 5, 2 * N_ah // 5, 3 * N_ah // 5, 4 * N_ah // 5]
-    V0_test_ratios = np.logspace(np.log10(0.5), np.log10(15), 25)
+    V_test_ratios = np.logspace(np.log10(0.5), np.log10(15), 25)
 
     fig_ch, axes_ch = plt.subplots(2, len(ch_directions), figsize=(20, 10),
                                     sharex='col')
@@ -877,50 +1035,51 @@ if __name__ == '__main__':
             ah_val = a_h[idx]
             F_par_sim = []
             sF_par_sim = []
-            for V0r in V0_test_ratios:
-                V0 = V0r * sig * ch_dir
-                r = _reweight(V0, sig)
+            for Vr in V_test_ratios:
+                V = Vr * sig * ch_dir
+                r = _reweight(V, sig)
                 F_par_sim.append(r['F'] @ ch_dir)
                 sF_par_sim.append(np.sqrt(np.sum(r['sF']**2 * ch_dir**2)))
             F_par_sim = np.array(F_par_sim)
             sF_par_sim = np.array(sF_par_sim)
 
-            bmax_arr = b_max_val(V0_test_ratios * sig, rp_max)
+            bmax_arr = b_max_val(V_test_ratios * sig, rp_max)
             ln_L_arr = np.log(np.maximum(bmax_arr, 1.01))
-            F_ch = chandrasekhar_F(V0_test_ratios * sig, sig, rho, ln_L_arr)
+            F_ch = chandrasekhar_F(V_test_ratios * sig, sig, rho, ln_L_arr)
             mean_lnL = np.mean(ln_L_arr)
 
             lbl_sim = f'$a/a_h={1/ah_val:.2g}$'
             lbl_ch  = f'Ch., $\\langle\\ln\\Lambda\\rangle\\approx{mean_lnL:.1f}$'
 
-            line = ax_F.errorbar(V0_test_ratios, F_par_sim, yerr=sF_par_sim,
+            line = ax_F.errorbar(V_test_ratios, np.abs(F_par_sim),
+                                  yerr=sF_par_sim,
                                   fmt='o-', ms=3, capsize=2, label=lbl_sim)
             c = line[0].get_color()
-            ax_F.plot(V0_test_ratios, F_ch, '--', color=c, alpha=0.6,
+            ax_F.plot(V_test_ratios, np.abs(F_ch), '--', color=c, alpha=0.6,
                       label=lbl_ch)
 
             with np.errstate(divide='ignore', invalid='ignore'):
-                ratio  = np.where(F_ch > 0, F_par_sim / F_ch, np.nan)
-                sratio = np.where(F_ch > 0, sF_par_sim / F_ch, np.nan)
-            ax_R.errorbar(V0_test_ratios, ratio, yerr=sratio,
+                ratio  = np.where(np.abs(F_ch) > 0, F_par_sim / F_ch, np.nan)
+                sratio = np.where(np.abs(F_ch) > 0, sF_par_sim / np.abs(F_ch), np.nan)
+            ax_R.errorbar(V_test_ratios, ratio, yerr=sratio,
                           fmt='o-', ms=3, capsize=2, color=c, label=lbl_sim)
 
         ax_F.set_xscale('log')
         ax_F.set_yscale('log')
-        ax_F.set_ylabel(r'$F_\parallel$ [$GM\rho a$]')
-        ax_F.set_title(f'$V_0$ along {dir_label}')
+        ax_F.set_ylabel(r'$|F_\parallel|$ [$GM\rho a$]')
+        ax_F.set_title(f'$V$ along {dir_label}')
         ax_F.legend(fontsize=6, ncol=2)
 
         ax_R.axhline(1, color='grey', lw=0.8, ls='--')
         ax_R.set_xscale('log')
-        ax_R.set_xlabel(r'$|V_0| / \sigma$')
+        ax_R.set_xlabel(r'$|V| / \sigma$')
         ax_R.set_ylabel(r'$F_{\mathrm{sim}} / F_{\mathrm{Chandrasekhar}}$')
         ax_R.set_ylim(0, 3)
         ax_R.legend(fontsize=6)
 
     fig_ch.suptitle(
         f'Chandrasekhar comparison (q={q}, e={e_ecc})\n'
-        r'$\ln\Lambda = \ln(b_{\max}(V_0) / a)$  with $a=1$',
+        r'$\ln\Lambda = \ln(b_{\max}(V) / a)$  with $a=1$',
         fontsize=11)
     fig_ch.tight_layout()
 
