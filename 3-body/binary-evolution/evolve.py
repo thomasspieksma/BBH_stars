@@ -452,14 +452,15 @@ def solve(q, e0, Vx0_s=0.0, Vy0_s=0.0, varpi0=0.0,
                   f"[{_rhs_count[0]} evals, {elapsed:.1f}s]   ",
                   end='', flush=True)
 
-        e_cur, Vx_s, Vy_s, varpi, _t, _x, _y = y
+        (e_cur, Vx_s, Vy_s, varpi, _t, _x, _y,
+         _ve, var_Vx, var_Vy, _vw, _vt, _vxp, _vyp) = y
         e_cur = np.clip(e_cur, 1e-6, 1.0 - 1e-6)
 
         if tables is not None:
-            H, K, Px, Py, Q = compute_rates_fast(
+            H, K, Px, Py, Q, sH, sK, sPx, sPy, sQ = compute_rates_fast(
                 xi, e_cur, Vx_s, Vy_s, varpi, tables)
         else:
-            H, K, Px, Py, Q = compute_rates(
+            H, K, Px, Py, Q, sH, sK, sPx, sPy, sQ = compute_rates(
                 xi, e_cur, Vx_s, Vy_s, varpi, q, data, e_grid)
 
         if H < 1e-6:
@@ -475,6 +476,7 @@ def solve(q, e0, Vx0_s=0.0, Vy0_s=0.0, varpi0=0.0,
             Ch_y = prefactor * J * Vy_s / V_mag
 
         dt_dxi = np.exp(xi) / H
+        dt_dxi_var = (np.exp(xi) * sH / H**2)**2
 
         return [K,
                 Px + Ch_x,
@@ -482,7 +484,14 @@ def solve(q, e0, Vx0_s=0.0, Vy0_s=0.0, varpi0=0.0,
                 Q,
                 dt_dxi,
                 Vx_s * dt_dxi,
-                Vy_s * dt_dxi]
+                Vy_s * dt_dxi,
+                sK**2,
+                sPx**2 + (Ch_x * sH / H)**2,
+                sPy**2 + (Ch_y * sH / H)**2,
+                sQ**2,
+                dt_dxi_var,
+                var_Vx * dt_dxi**2 + Vx_s**2 * dt_dxi_var,
+                var_Vy * dt_dxi**2 + Vy_s**2 * dt_dxi_var]
 
     # Stop when eccentricity leaves the data grid
     def _e_boundary(xi, y):
@@ -490,7 +499,8 @@ def solve(q, e0, Vx0_s=0.0, Vy0_s=0.0, varpi0=0.0,
     _e_boundary.terminal = True
     _e_boundary.direction = -1
 
-    y0 = [e0, Vx0_s, Vy0_s, varpi0, 0.0, 0.0, 0.0]
+    y0 = [e0, Vx0_s, Vy0_s, varpi0, 0.0, 0.0, 0.0,
+          0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 
     defaults = dict(method='RK45', rtol=1e-8, atol=1e-10, dense_output=True,
                     events=_e_boundary)
@@ -511,7 +521,7 @@ def solve_simple(q, e0, xi_span=(0.0, 5.0), data_dir=None, **solve_ivp_kwargs):
     Returns
     -------
     sol : OdeResult
-        ``.t`` = xi, ``.y`` = ``(e, t/T_hard)``.
+        ``.t`` = xi, ``.y`` = ``(e, t/T_hard, var_e, var_t)``.
     """
     data, e_grid = load_harmonics_data(q, data_dir)
     e_max = e_grid[-1] - 0.01
@@ -529,20 +539,22 @@ def solve_simple(q, e0, xi_span=(0.0, 5.0), data_dir=None, **solve_ivp_kwargs):
                   f"[{_rhs_count[0]} evals, {elapsed:.1f}s]   ",
                   end='', flush=True)
 
-        e_cur, _t = y
+        e_cur, _t, _ve, _vt = y
         e_cur = np.clip(e_cur, 1e-6, 1.0 - 1e-6)
-        H, K, _, _, _ = compute_rates(xi, e_cur, 0.0, 0.0, 0.0,
-                                      q, data, e_grid)
+        H, K, _, _, _, sH, sK, _, _, _ = compute_rates(
+            xi, e_cur, 0.0, 0.0, 0.0, q, data, e_grid)
         if H < 1e-6:
             H = 1e-6
-        return [K, np.exp(xi) / H]
+        dt_dxi = np.exp(xi) / H
+        return [K, dt_dxi,
+                sK**2, (np.exp(xi) * sH / H**2)**2]
 
     def _e_boundary(xi, y):
         return e_max - y[0]
     _e_boundary.terminal = True
     _e_boundary.direction = -1
 
-    y0 = [e0, 0.0]
+    y0 = [e0, 0.0, 0.0, 0.0]
 
     defaults = dict(method='RK45', rtol=1e-8, atol=1e-10, dense_output=True,
                     events=_e_boundary)
@@ -628,48 +640,73 @@ if __name__ == '__main__':
         sys.exit(1)
 
     xi = sol.t
-    e, Vx, Vy, varpi, t, x_pos, y_pos = sol.y
+    (e, Vx, Vy, varpi, t, x_pos, y_pos,
+     var_e, var_Vx, var_Vy, var_varpi, var_t, var_x, var_y) = sol.y
     a_ah = np.exp(-xi)
     V = np.hypot(Vx, Vy)
+    sig_e = np.sqrt(np.maximum(var_e, 0))
+    sig_Vx = np.sqrt(np.maximum(var_Vx, 0))
+    sig_Vy = np.sqrt(np.maximum(var_Vy, 0))
+    sig_varpi = np.sqrt(np.maximum(var_varpi, 0))
+    sig_t = np.sqrt(np.maximum(var_t, 0))
+    sig_x = np.sqrt(np.maximum(var_x, 0))
+    sig_y = np.sqrt(np.maximum(var_y, 0))
 
     print(f"\nFull solution — {len(xi)} steps, {_status(sol)}")
     print(f"  xi:        {xi[0]:.2f} → {xi[-1]:.2f}  "
           f"(a/a_h: {a_ah[0]:.3f} → {a_ah[-1]:.5f})")
-    print(f"  e:         {e[0]:.4f} → {e[-1]:.4f}")
-    print(f"  |V|/sigma: {V[0]:.4f} → {V[-1]:.4f}")
-    print(f"  varpi:     {varpi[0]:.4f} → {varpi[-1]:.4f} rad")
-    print(f"  t/T_hard:  {t[0]:.4f} → {t[-1]:.4f}")
+    print(f"  e:         {e[0]:.4f} → {e[-1]:.4f}  "
+          f"(±{sig_e[-1]:.4f})")
+    print(f"  |V|/sigma: {V[0]:.4f} → {V[-1]:.4f}  "
+          f"(±{np.hypot(sig_Vx[-1], sig_Vy[-1]):.4f})")
+    print(f"  varpi:     {varpi[0]:.4f} → {varpi[-1]:.4f} rad  "
+          f"(±{sig_varpi[-1]:.4f})")
+    print(f"  t/T_hard:  {t[0]:.4f} → {t[-1]:.4f}  "
+          f"(±{sig_t[-1]:.4f})")
 
     # ── V=0 reference solution ────────────────────────────────────────────
     print("Integrating (V=0 reference)...")
     sol0 = solve_simple(args.q, args.e0, xi_span=xi_span)
 
     xi0 = sol0.t
-    e0_ref, t0_ref = sol0.y
+    e0_ref, t0_ref, var_e0_ref, var_t0_ref = sol0.y
     a_ah0 = np.exp(-xi0)
+    sig_e0 = np.sqrt(np.maximum(var_e0_ref, 0))
+    sig_t0 = np.sqrt(np.maximum(var_t0_ref, 0))
 
     print(f"V=0 reference — {len(xi0)} steps, {_status(sol0)}")
 
     # ── Plots ─────────────────────────────────────────────────────────────
     try:
         import matplotlib.pyplot as plt
+        from matplotlib.patches import Ellipse
 
         fig = plt.figure(figsize=(14, 11))
         gs = fig.add_gridspec(3, 3, hspace=0.4, wspace=0.4)
+        band_alpha = 0.2
 
         # Row 0: e(xi), a/a_h(xi), CoM trajectory (x, y)
         ax = fig.add_subplot(gs[0, 0])
-        ax.plot(xi, e)
+        ln, = ax.plot(xi, e)
+        ax.fill_between(xi, e - sig_e, e + sig_e,
+                        color=ln.get_color(), alpha=band_alpha)
         ax.set(xlabel=r'$\xi = \ln(a_h/a)$', ylabel='$e$')
 
         ax = fig.add_subplot(gs[0, 1])
-        ax.plot(xi, a_ah)
+        ln, = ax.plot(xi, a_ah)
         ax.set(xlabel=r'$\xi$', ylabel='$a/a_h$', yscale='log')
 
         ax = fig.add_subplot(gs[0, 2])
         ax.plot(x_pos, y_pos)
         ax.plot(x_pos[0], y_pos[0], 'o', ms=5, label='start')
         ax.plot(x_pos[-1], y_pos[-1], 's', ms=5, label='end')
+        n_ell = min(10, len(xi))
+        ell_idx = np.linspace(0, len(xi) - 1, n_ell, dtype=int)
+        for ii in ell_idx:
+            ell = Ellipse((x_pos[ii], y_pos[ii]),
+                          width=2 * sig_x[ii], height=2 * sig_y[ii],
+                          facecolor='C0', alpha=0.15, edgecolor='none')
+            ax.add_patch(ell)
         ax.set(xlabel=r'$x\;/\;(\sigma\, T_{\rm hard})$',
                ylabel=r'$y\;/\;(\sigma\, T_{\rm hard})$')
         ax.set_aspect('equal', adjustable='datalim')
@@ -677,25 +714,35 @@ if __name__ == '__main__':
 
         # Row 1: Vx,Vy(xi), varpi(xi)
         ax = fig.add_subplot(gs[1, 0])
-        ax.plot(xi, Vx, label=r'$V_x/\sigma$')
-        ax.plot(xi, Vy, label=r'$V_y/\sigma$')
+        ln1, = ax.plot(xi, Vx, label=r'$V_x/\sigma$')
+        ax.fill_between(xi, Vx - sig_Vx, Vx + sig_Vx,
+                        color=ln1.get_color(), alpha=band_alpha)
+        ln2, = ax.plot(xi, Vy, label=r'$V_y/\sigma$')
+        ax.fill_between(xi, Vy - sig_Vy, Vy + sig_Vy,
+                        color=ln2.get_color(), alpha=band_alpha)
         ax.set(xlabel=r'$\xi$', ylabel=r'$V/\sigma$')
         ax.legend(fontsize='small')
 
         ax = fig.add_subplot(gs[1, 1])
-        ax.plot(xi, varpi)
+        ln, = ax.plot(xi, varpi)
+        ax.fill_between(xi, varpi - sig_varpi, varpi + sig_varpi,
+                        color=ln.get_color(), alpha=band_alpha)
         ax.set(xlabel=r'$\xi$', ylabel=r'$\varpi$ [rad]')
 
         # Row 2: e(t) and a/a_h(t) with V=0 dashed reference
         ax = fig.add_subplot(gs[2, 0])
-        ax.plot(t, e, label='full')
-        ax.plot(t0_ref, e0_ref, '--', label=r'$V{=}0$ ref')
+        ln, = ax.plot(t, e, label='full')
+        ax.fill_between(t, e - sig_e, e + sig_e,
+                        color=ln.get_color(), alpha=band_alpha)
+        ln0, = ax.plot(t0_ref, e0_ref, '--', label=r'$V{=}0$ ref')
+        ax.fill_between(t0_ref, e0_ref - sig_e0, e0_ref + sig_e0,
+                        color=ln0.get_color(), alpha=band_alpha)
         ax.set(xlabel=r'$t\;/\;T_{\rm hard}$', ylabel='$e$')
         ax.legend(fontsize='small')
 
         ax = fig.add_subplot(gs[2, 1])
-        ax.plot(t, a_ah, label='full')
-        ax.plot(t0_ref, a_ah0, '--', label=r'$V{=}0$ ref')
+        ln, = ax.plot(t, a_ah, label='full')
+        ln0, = ax.plot(t0_ref, a_ah0, '--', label=r'$V{=}0$ ref')
         ax.set(xlabel=r'$t\;/\;T_{\rm hard}$', ylabel='$a/a_h$',
                yscale='log')
         ax.legend(fontsize='small')
