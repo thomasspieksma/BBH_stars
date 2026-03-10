@@ -96,7 +96,7 @@ def load_harmonics_data(q, data_dir=None):
 
 # ── Rate evaluation (with eccentricity interpolation) ─────────────────────────
 
-def compute_rates(xi, e, Vx_s, Vy_s, varpi, q, data, e_grid):
+def compute_rates(xi, e, Vx_s, Vy_s, varpi, q, data, e_grid, n_stencil=4):
     """Compute dimensionless evolution parameters at the current state.
 
     Parameters
@@ -113,6 +113,9 @@ def compute_rates(xi, e, Vx_s, Vy_s, varpi, q, data, e_grid):
         Mass ratio.
     data, e_grid :
         Output of :func:`load_harmonics_data`.
+    n_stencil : int
+        Number of eccentricity grid points in the Lagrange interpolation
+        stencil (2 = linear, 4 = cubic).
 
     Returns
     -------
@@ -162,8 +165,7 @@ def compute_rates(xi, e, Vx_s, Vy_s, varpi, q, data, e_grid):
     elif e >= eg[-1]:
         H, K, Pe, Pn, Q, sH, sK, sPe, sPn, sQ = _eval_at_e(eg[-1])
     else:
-        # 4-point Lagrange interpolation stencil (degree-3 polynomial)
-        n_stencil = min(4, len(eg))
+        n_stencil = min(n_stencil, len(eg))
         idx = int(np.searchsorted(eg, e))
         i0 = max(0, min(idx - n_stencil // 2, len(eg) - n_stencil))
         stencil_e = eg[i0:i0 + n_stencil]
@@ -370,6 +372,7 @@ def solve(q, e0, Vx0_s=0.0, Vy0_s=0.0, varpi0=0.0,
           xi_span=(0.0, 5.0), r_outer_ah=None,
           chandrasekhar='integral', data_dir=None,
           precompute=False, V_max=1.5, n_Ve=13, n_Vn=13, n_xi=50,
+          e_interp='cubic', freeze=(),
           **solve_ivp_kwargs):
     r"""Integrate the binary-evolution ODEs.
 
@@ -413,15 +416,31 @@ def solve(q, e0, Vx0_s=0.0, Vy0_s=0.0, varpi0=0.0,
     sol : OdeResult
         ``.t`` = xi, ``.y`` has 14 rows:
         ``(e, Vx/σ, Vy/σ, ϖ, t/T_hard, x̃, ỹ,
-          var_e, var_Vx, var_Vy, var_ϖ, var_t, var_x, var_y)``.
+          σ_e, σ_Vx, σ_Vy, σ_ϖ, σ_t, σ_x, σ_y)``.
         Positions x̃, ỹ are in units of σ · T_hard.
-        The ``var_*`` rows are accumulated variances from Monte Carlo
-        rate uncertainties; take ``sqrt`` for 1-σ bands.
+        The ``σ_*`` rows are deterministic 1-σ uncertainty bands
+        from Monte Carlo rate uncertainties (fully correlated limit).
     """
     if r_outer_ah is None:
         r_outer_ah = 4.0 * (1.0 + q)**2 / q
 
+    _freeze = frozenset(freeze)
+    _valid_freeze = {'e', 'Vx', 'Vy', 'varpi'}
+    if _freeze - _valid_freeze:
+        raise ValueError(f"Unknown freeze parameters: {_freeze - _valid_freeze}")
+    if _freeze:
+        print(f"  Frozen: {', '.join(sorted(_freeze))}")
+
     data, e_grid = load_harmonics_data(q, data_dir)
+
+    _n_stencil = 4
+    if e_interp == 'linear':
+        coarse = e_grid[np.abs(np.round(e_grid, 1) - e_grid) < 1e-9]
+        e_grid = coarse
+        _n_stencil = 2
+        print(f"  Coarse grid: {len(e_grid)} points "
+              f"(e = {e_grid[0]:.1f} … {e_grid[-1]:.1f}), linear interp")
+
     e_max = e_grid[-1] - 0.01
 
     tables = None
@@ -453,7 +472,7 @@ def solve(q, e0, Vx0_s=0.0, Vy0_s=0.0, varpi0=0.0,
                   end='', flush=True)
 
         (e_cur, Vx_s, Vy_s, varpi, _t, _x, _y,
-         _ve, var_Vx, var_Vy, _vw, _vt, _vxp, _vyp) = y
+         _se, sig_Vx, sig_Vy, _sw, _st, _sx, _sy) = y
         e_cur = np.clip(e_cur, 1e-6, 1.0 - 1e-6)
 
         if tables is not None:
@@ -461,7 +480,8 @@ def solve(q, e0, Vx0_s=0.0, Vy0_s=0.0, varpi0=0.0,
                 xi, e_cur, Vx_s, Vy_s, varpi, tables)
         else:
             H, K, Px, Py, Q, sH, sK, sPx, sPy, sQ = compute_rates(
-                xi, e_cur, Vx_s, Vy_s, varpi, q, data, e_grid)
+                xi, e_cur, Vx_s, Vy_s, varpi, q, data, e_grid,
+                n_stencil=_n_stencil)
 
         if H < 1e-6:
             H = 1e-6
@@ -476,22 +496,24 @@ def solve(q, e0, Vx0_s=0.0, Vy0_s=0.0, varpi0=0.0,
             Ch_y = prefactor * J * Vy_s / V_mag
 
         dt_dxi = np.exp(xi) / H
-        dt_dxi_var = (np.exp(xi) * sH / H**2)**2
+        sig_t_rate = np.exp(xi) * sH / H**2
 
-        return [K,
-                Px + Ch_x,
-                Py + Ch_y,
-                Q,
+        de  = 0.0 if 'e'     in _freeze else K
+        dVx = 0.0 if 'Vx'    in _freeze else Px + Ch_x
+        dVy = 0.0 if 'Vy'    in _freeze else Py + Ch_y
+        dw  = 0.0 if 'varpi' in _freeze else Q
+
+        return [de, dVx, dVy, dw,
                 dt_dxi,
                 Vx_s * dt_dxi,
                 Vy_s * dt_dxi,
-                sK**2,
-                sPx**2 + (Ch_x * sH / H)**2,
-                sPy**2 + (Ch_y * sH / H)**2,
-                sQ**2,
-                dt_dxi_var,
-                var_Vx * dt_dxi**2 + Vx_s**2 * dt_dxi_var,
-                var_Vy * dt_dxi**2 + Vy_s**2 * dt_dxi_var]
+                0.0 if 'e'     in _freeze else sK,
+                0.0 if 'Vx'    in _freeze else np.sqrt(sPx**2 + (Ch_x * sH / H)**2),
+                0.0 if 'Vy'    in _freeze else np.sqrt(sPy**2 + (Ch_y * sH / H)**2),
+                0.0 if 'varpi' in _freeze else sQ,
+                sig_t_rate,
+                sig_Vx * dt_dxi + abs(Vx_s) * sig_t_rate,
+                sig_Vy * dt_dxi + abs(Vy_s) * sig_t_rate]
 
     # Stop when eccentricity leaves the data grid
     def _e_boundary(xi, y):
@@ -512,7 +534,8 @@ def solve(q, e0, Vx0_s=0.0, Vy0_s=0.0, varpi0=0.0,
     return sol
 
 
-def solve_simple(q, e0, xi_span=(0.0, 5.0), data_dir=None, **solve_ivp_kwargs):
+def solve_simple(q, e0, xi_span=(0.0, 5.0), data_dir=None, e_interp='cubic',
+                 **solve_ivp_kwargs):
     r"""Integrate the reduced (V=0) binary-evolution ODEs.
 
     Only eccentricity and time evolve; velocity and precession are ignored.
@@ -521,9 +544,16 @@ def solve_simple(q, e0, xi_span=(0.0, 5.0), data_dir=None, **solve_ivp_kwargs):
     Returns
     -------
     sol : OdeResult
-        ``.t`` = xi, ``.y`` = ``(e, t/T_hard, var_e, var_t)``.
+        ``.t`` = xi, ``.y`` = ``(e, t/T_hard, σ_e, σ_t)``.
     """
     data, e_grid = load_harmonics_data(q, data_dir)
+
+    _n_stencil = 4
+    if e_interp == 'linear':
+        coarse = e_grid[np.abs(np.round(e_grid, 1) - e_grid) < 1e-9]
+        e_grid = coarse
+        _n_stencil = 2
+
     e_max = e_grid[-1] - 0.01
 
     _rhs_count = [0]
@@ -539,15 +569,15 @@ def solve_simple(q, e0, xi_span=(0.0, 5.0), data_dir=None, **solve_ivp_kwargs):
                   f"[{_rhs_count[0]} evals, {elapsed:.1f}s]   ",
                   end='', flush=True)
 
-        e_cur, _t, _ve, _vt = y
+        e_cur, _t, _se, _st = y
         e_cur = np.clip(e_cur, 1e-6, 1.0 - 1e-6)
         H, K, _, _, _, sH, sK, _, _, _ = compute_rates(
-            xi, e_cur, 0.0, 0.0, 0.0, q, data, e_grid)
+            xi, e_cur, 0.0, 0.0, 0.0, q, data, e_grid,
+            n_stencil=_n_stencil)
         if H < 1e-6:
             H = 1e-6
-        dt_dxi = np.exp(xi) / H
-        return [K, dt_dxi,
-                sK**2, (np.exp(xi) * sH / H**2)**2]
+        return [K, np.exp(xi) / H,
+                sK, np.exp(xi) * sH / H**2]
 
     def _e_boundary(xi, y):
         return e_max - y[0]
@@ -608,6 +638,16 @@ if __name__ == '__main__':
                         help='Vn grid points (default: 13)')
     parser.add_argument('--n-xi', type=int, default=50,
                         help='xi grid points for precomputation (default: 50)')
+    parser.add_argument('--coarse', action='store_true',
+                        help='Use coarse e-grid (0.1 spacing) with linear interp')
+    parser.add_argument('--freeze-e', action='store_true',
+                        help='Freeze eccentricity at its initial value')
+    parser.add_argument('--freeze-Vx', action='store_true',
+                        help='Freeze Vx at its initial value')
+    parser.add_argument('--freeze-Vy', action='store_true',
+                        help='Freeze Vy at its initial value')
+    parser.add_argument('--freeze-varpi', action='store_true',
+                        help='Freeze varpi at its initial value')
     args = parser.parse_args()
 
     if args.a0 is not None and args.xi_start is not None:
@@ -619,9 +659,19 @@ if __name__ == '__main__':
     else:
         xi_start = 0.0
 
+    e_interp = 'linear' if args.coarse else 'cubic'
+
+    freeze = set()
+    if args.freeze_e:     freeze.add('e')
+    if args.freeze_Vx:    freeze.add('Vx')
+    if args.freeze_Vy:    freeze.add('Vy')
+    if args.freeze_varpi: freeze.add('varpi')
+
     print(f"Binary evolution: q={args.q}, e0={args.e0}, "
           f"V0/sigma=({args.Vx0}, {args.Vy0}), varpi0={args.varpi0}")
     mode = "precomputed 4D tables" if args.precompute else "on-the-fly (4-pt Lagrange)"
+    if args.coarse:
+        mode = "on-the-fly (coarse, linear)"
     print(f"xi in [{xi_start:.4f}, {args.xi_end}]  "
           f"(a/a_h: {np.exp(-xi_start):.4f} → {np.exp(-args.xi_end):.6f}), "
           f"Chandrasekhar: {args.chandrasekhar}, rates: {mode}")
@@ -633,7 +683,8 @@ if __name__ == '__main__':
     sol = solve(args.q, args.e0, args.Vx0, args.Vy0, args.varpi0,
                 xi_span=xi_span, chandrasekhar=args.chandrasekhar,
                 precompute=args.precompute, V_max=args.V_max,
-                n_Ve=args.n_Ve, n_Vn=args.n_Vn, n_xi=args.n_xi)
+                n_Ve=args.n_Ve, n_Vn=args.n_Vn, n_xi=args.n_xi,
+                e_interp=e_interp, freeze=freeze)
 
     if not sol.success and _status(sol).startswith("FAILED"):
         print(f"\nIntegration {_status(sol)}")
@@ -641,16 +692,9 @@ if __name__ == '__main__':
 
     xi = sol.t
     (e, Vx, Vy, varpi, t, x_pos, y_pos,
-     var_e, var_Vx, var_Vy, var_varpi, var_t, var_x, var_y) = sol.y
+     sig_e, sig_Vx, sig_Vy, sig_varpi, sig_t, sig_x, sig_y) = sol.y
     a_ah = np.exp(-xi)
     V = np.hypot(Vx, Vy)
-    sig_e = np.sqrt(np.maximum(var_e, 0))
-    sig_Vx = np.sqrt(np.maximum(var_Vx, 0))
-    sig_Vy = np.sqrt(np.maximum(var_Vy, 0))
-    sig_varpi = np.sqrt(np.maximum(var_varpi, 0))
-    sig_t = np.sqrt(np.maximum(var_t, 0))
-    sig_x = np.sqrt(np.maximum(var_x, 0))
-    sig_y = np.sqrt(np.maximum(var_y, 0))
 
     print(f"\nFull solution — {len(xi)} steps, {_status(sol)}")
     print(f"  xi:        {xi[0]:.2f} → {xi[-1]:.2f}  "
@@ -666,13 +710,12 @@ if __name__ == '__main__':
 
     # ── V=0 reference solution ────────────────────────────────────────────
     print("Integrating (V=0 reference)...")
-    sol0 = solve_simple(args.q, args.e0, xi_span=xi_span)
+    sol0 = solve_simple(args.q, args.e0, xi_span=xi_span,
+                        e_interp=e_interp)
 
     xi0 = sol0.t
-    e0_ref, t0_ref, var_e0_ref, var_t0_ref = sol0.y
+    e0_ref, t0_ref, sig_e0, sig_t0 = sol0.y
     a_ah0 = np.exp(-xi0)
-    sig_e0 = np.sqrt(np.maximum(var_e0_ref, 0))
-    sig_t0 = np.sqrt(np.maximum(var_t0_ref, 0))
 
     print(f"V=0 reference — {len(xi0)} steps, {_status(sol0)}")
 
@@ -742,7 +785,11 @@ if __name__ == '__main__':
 
         ax = fig.add_subplot(gs[2, 1])
         ln, = ax.plot(t, a_ah, label='full')
+        ax.fill_betweenx(a_ah, t - sig_t, t + sig_t,
+                         alpha=band_alpha, color=ln.get_color())
         ln0, = ax.plot(t0_ref, a_ah0, '--', label=r'$V{=}0$ ref')
+        ax.fill_betweenx(a_ah0, t0_ref - sig_t0, t0_ref + sig_t0,
+                         alpha=band_alpha, color=ln0.get_color())
         ax.set(xlabel=r'$t\;/\;T_{\rm hard}$', ylabel='$a/a_h$',
                yscale='log')
         ax.legend(fontsize='small')

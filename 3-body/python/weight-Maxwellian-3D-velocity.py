@@ -245,6 +245,7 @@ def reweight(meta, bins, V, sigma, rho=1.0):
 
     P_x, sP_x = _P_comp(F[0], sF[0])
     P_y, sP_y = _P_comp(F[1], sF[1])
+    P_z, sP_z = _P_comp(F[2], sF[2])
 
     if abs(P) > 0 and abs(varpi_dot) > 1e-300:
         Q = -(mu / 2) * varpi_dot / P
@@ -252,11 +253,23 @@ def reweight(meta, bins, V, sigma, rho=1.0):
     else:
         Q = np.nan; sQ = np.nan
 
+    def _R_comp(tau_perp, stau_perp):
+        denom = 2 * P * np.sqrt(1 - e_ecc**2)
+        if abs(P) > 0 and abs(tau_perp) > 1e-300:
+            Rval = tau_perp / denom
+            sRval = _safe_ratio_err(tau_perp, stau_perp, P, sP) / (2 * np.sqrt(1 - e_ecc**2))
+            return Rval, sRval
+        return np.nan, np.nan
+
+    R_x, sR_x = _R_comp(tau[1], stau[1])
+    R_y, sR_y = _R_comp(-tau[0], stau[0])
+
     return dict(
         P=P, sP=sP, F=F, sF=sF, tau=tau, stau=stau,
-        H=H, sH=sH, K=K, sK=sK, P_x=P_x, sP_x=sP_x, P_y=P_y, sP_y=sP_y,
+        H=H, sH=sH, K=K, sK=sK,
+        P_x=P_x, sP_x=sP_x, P_y=P_y, sP_y=sP_y, P_z=P_z, sP_z=sP_z,
         varpi_dot=varpi_dot, svarpi_dot=svarpi_dot,
-        Q=Q, sQ=sQ,
+        Q=Q, sQ=sQ, R_x=R_x, sR_x=sR_x, R_y=R_y, sR_y=sR_y,
     )
 
 # ── Real spherical harmonics (matches C++ compute_real_Ylm exactly) ──────────
@@ -430,6 +443,7 @@ def reweight_from_harmonics(meta, harm_bins, V, sigma, rho=1.0):
 
     P_x, sP_x = _P_comp(F[0], sF[0])
     P_y, sP_y = _P_comp(F[1], sF[1])
+    P_z, sP_z = _P_comp(F[2], sF[2])
 
     if abs(P) > 0 and abs(varpi_dot) > 1e-300:
         Q = -(mu / 2) * varpi_dot / P
@@ -437,11 +451,23 @@ def reweight_from_harmonics(meta, harm_bins, V, sigma, rho=1.0):
     else:
         Q = np.nan; sQ = np.nan
 
+    def _R_comp(tau_perp, stau_perp):
+        denom = 2 * P * np.sqrt(1 - e_ecc**2)
+        if abs(P) > 0 and abs(tau_perp) > 1e-300:
+            Rval = tau_perp / denom
+            sRval = _safe_ratio_err(tau_perp, stau_perp, P, sP) / (2 * np.sqrt(1 - e_ecc**2))
+            return Rval, sRval
+        return np.nan, np.nan
+
+    R_x, sR_x = _R_comp(tau[1], stau[1])
+    R_y, sR_y = _R_comp(-tau[0], stau[0])
+
     return dict(
         P=P, sP=sP, F=F, sF=sF, tau=tau, stau=stau,
-        H=H, sH=sH, K=K, sK=sK, P_x=P_x, sP_x=sP_x, P_y=P_y, sP_y=sP_y,
+        H=H, sH=sH, K=K, sK=sK,
+        P_x=P_x, sP_x=sP_x, P_y=P_y, sP_y=sP_y, P_z=P_z, sP_z=sP_z,
         varpi_dot=varpi_dot, svarpi_dot=svarpi_dot,
-        Q=Q, sQ=sQ,
+        Q=Q, sQ=sQ, R_x=R_x, sR_x=sR_x, R_y=R_y, sR_y=sR_y,
     )
 
 # ── Isotropic check via original text-file method ────────────────────────────
@@ -766,6 +792,16 @@ if __name__ == '__main__':
             svarpi_dot_arr = np.empty(N_ah)
             Q_arr          = np.empty(N_ah)
             sQ_arr         = np.empty(N_ah)
+            P_x_arr        = np.empty(N_ah)
+            sP_x_arr       = np.empty(N_ah)
+            P_y_arr        = np.empty(N_ah)
+            sP_y_arr       = np.empty(N_ah)
+            P_z_arr        = np.empty(N_ah)
+            sP_z_arr       = np.empty(N_ah)
+            R_x_arr        = np.empty(N_ah)
+            sR_x_arr       = np.empty(N_ah)
+            R_y_arr        = np.empty(N_ah)
+            sR_y_arr       = np.empty(N_ah)
             F_total_arr    = np.empty((N_ah, 3))
 
             for i, sig in enumerate(sigma):
@@ -783,6 +819,16 @@ if __name__ == '__main__':
                 svarpi_dot_arr[i] = r['svarpi_dot']
                 Q_arr[i]          = r['Q']
                 sQ_arr[i]         = r['sQ']
+                P_x_arr[i]        = r['P_x']
+                sP_x_arr[i]       = r['sP_x']
+                P_y_arr[i]        = r['P_y']
+                sP_y_arr[i]       = r['sP_y']
+                P_z_arr[i]        = r['P_z']
+                sP_z_arr[i]       = r['sP_z']
+                R_x_arr[i]        = r['R_x']
+                sR_x_arr[i]       = r['sR_x']
+                R_y_arr[i]        = r['R_y']
+                sR_y_arr[i]       = r['sR_y']
 
                 V_tilde = abs(Vr)
                 if V_tilde > 1e-15:
@@ -800,6 +846,9 @@ if __name__ == '__main__':
                 F=F_arr, sF=sF_arr, tau=tau_arr, stau=stau_arr,
                 varpi_dot=varpi_dot_arr, svarpi_dot=svarpi_dot_arr,
                 Q=Q_arr, sQ=sQ_arr,
+                P_x=P_x_arr, sP_x=sP_x_arr, P_y=P_y_arr, sP_y=sP_y_arr,
+                P_z=P_z_arr, sP_z=sP_z_arr,
+                R_x=R_x_arr, sR_x=sR_x_arr, R_y=R_y_arr, sR_y=sR_y_arr,
                 F_total=F_total_arr,
             )
             print(f"  Computed: V/sigma={Vr:+d}, dir={dir_label}")
@@ -818,6 +867,11 @@ if __name__ == '__main__':
         tau_c    = np.empty((N_ah, 3));  stau_c = np.empty((N_ah, 3))
         vd_c     = np.empty(N_ah);  svd_c    = np.empty(N_ah)
         Q_c      = np.empty(N_ah);  sQ_c     = np.empty(N_ah)
+        Px_c     = np.empty(N_ah);  sPx_c    = np.empty(N_ah)
+        Py_c     = np.empty(N_ah);  sPy_c    = np.empty(N_ah)
+        Pz_c     = np.empty(N_ah);  sPz_c    = np.empty(N_ah)
+        Rx_c     = np.empty(N_ah);  sRx_c    = np.empty(N_ah)
+        Ry_c     = np.empty(N_ah);  sRy_c    = np.empty(N_ah)
         Ftot_c   = np.empty((N_ah, 3))
 
         for i, sig in enumerate(sigma):
@@ -829,6 +883,11 @@ if __name__ == '__main__':
             tau_c[i]  = r['tau'];    stau_c[i] = r['stau']
             vd_c[i]   = r['varpi_dot'];  svd_c[i] = r['svarpi_dot']
             Q_c[i]    = r['Q'];      sQ_c[i]   = r['sQ']
+            Px_c[i]   = r['P_x'];   sPx_c[i]  = r['sP_x']
+            Py_c[i]   = r['P_y'];   sPy_c[i]  = r['sP_y']
+            Pz_c[i]   = r['P_z'];   sPz_c[i]  = r['sP_z']
+            Rx_c[i]   = r['R_x'];   sRx_c[i]  = r['sR_x']
+            Ry_c[i]   = r['R_y'];   sRy_c[i]  = r['sR_y']
 
             xi_i = np.log(a_h[i])
             J = chandrasekhar_decel_integral(V_cart_mag, xi_i, q, r_outer_ah)
@@ -841,7 +900,11 @@ if __name__ == '__main__':
             H=H_c, sH=sH_c, K=K_c, sK=sK_c,
             F=F_c, sF=sF_c, tau=tau_c, stau=stau_c,
             varpi_dot=vd_c, svarpi_dot=svd_c,
-            Q=Q_c, sQ=sQ_c, F_total=Ftot_c,
+            Q=Q_c, sQ=sQ_c,
+            P_x=Px_c, sP_x=sPx_c, P_y=Py_c, sP_y=sPy_c,
+            P_z=Pz_c, sP_z=sPz_c,
+            R_x=Rx_c, sR_x=sRx_c, R_y=Ry_c, sR_y=sRy_c,
+            F_total=Ftot_c,
         ))
         print(f"  Computed: {cart_label}")
 
@@ -933,6 +996,64 @@ if __name__ == '__main__':
     ax_tQ.legend(fontsize=7)
     ax_tQ.set_title(f'$Q$ (q={q}, e={e_ecc})')
     fig_tQ.tight_layout()
+
+    # ── Plot R_x and R_y (a/a_h) ──
+    fig_R, axes_R = plt.subplots(1, 2, figsize=(14, 5))
+    R_keys = ['R_x', 'R_y']
+    R_err_keys = ['sR_x', 'sR_y']
+    R_labels = [r'$R_{\hat e}$', r'$R_{\hat n}$']
+    for k, ax in enumerate(axes_R):
+        seen_zero = False
+        for (dir_label, Vr), res in results.items():
+            if Vr == 0:
+                if seen_zero:
+                    continue
+                seen_zero = True
+            Rk  = res[R_keys[k]]
+            sRk = res[R_err_keys[k]]
+            ax.plot(1/a_h, Rk, label=_label(Vr, dir_label))
+            ax.fill_between(1/a_h, Rk - sRk, Rk + sRk, alpha=0.08)
+        for rc in cart_results:
+            Rk_c  = rc[R_keys[k]]
+            sRk_c = rc[R_err_keys[k]]
+            ax.plot(1/a_h, Rk_c, '--', label=rc['label'])
+            ax.fill_between(1/a_h, Rk_c - sRk_c, Rk_c + sRk_c, alpha=0.08)
+        ax.axhline(0, color='grey', lw=0.5)
+        ax.set_xscale('log')
+        ax.set_xlabel(r'$a/a_h$')
+        ax.set_ylabel(R_labels[k])
+        ax.legend(fontsize=7)
+    fig_R.suptitle(f'Rotation parameter (q={q}, e={e_ecc})', fontsize=11)
+    fig_R.tight_layout()
+
+    # ── Plot P_x, P_y, P_z (a/a_h) ──
+    fig_P, axes_P = plt.subplots(1, 3, figsize=(18, 5))
+    Pcomp_keys = ['P_x', 'P_y', 'P_z']
+    Pcomp_err_keys = ['sP_x', 'sP_y', 'sP_z']
+    Pcomp_labels = [r'$P_{\hat e}$', r'$P_{\hat n}$', r'$P_{\hat L}$']
+    for k, ax in enumerate(axes_P):
+        seen_zero = False
+        for (dir_label, Vr), res in results.items():
+            if Vr == 0:
+                if seen_zero:
+                    continue
+                seen_zero = True
+            Pk  = res[Pcomp_keys[k]]
+            sPk = res[Pcomp_err_keys[k]]
+            ax.plot(1/a_h, Pk, label=_label(Vr, dir_label))
+            ax.fill_between(1/a_h, Pk - sPk, Pk + sPk, alpha=0.08)
+        for rc in cart_results:
+            Pk_c  = rc[Pcomp_keys[k]]
+            sPk_c = rc[Pcomp_err_keys[k]]
+            ax.plot(1/a_h, Pk_c, '--', label=rc['label'])
+            ax.fill_between(1/a_h, Pk_c - sPk_c, Pk_c + sPk_c, alpha=0.08)
+        ax.axhline(0, color='grey', lw=0.5)
+        ax.set_xscale('log')
+        ax.set_xlabel(r'$a/a_h$')
+        ax.set_ylabel(Pcomp_labels[k])
+        ax.legend(fontsize=6)
+    fig_P.suptitle(f'Acceleration parameter (q={q}, e={e_ecc})', fontsize=11)
+    fig_P.tight_layout()
 
     # ── Plot signed F components: one figure per V direction ──
     comp_names = ['x', 'y', 'z']
