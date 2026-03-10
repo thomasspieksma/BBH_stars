@@ -116,9 +116,9 @@ def compute_rates(xi, e, Vx_s, Vy_s, varpi, q, data, e_grid):
 
     Returns
     -------
-    H, K, Px, Py, Q : float
+    H, K, Px, Py, Q, sH, sK, sPx, sPy, sQ : float
         Hardening rate, eccentricity growth rate, lab-frame acceleration
-        components, and precession parameter.
+        components, precession parameter, and their 1-sigma uncertainties.
     """
     cos_w, sin_w = np.cos(varpi), np.sin(varpi)
 
@@ -138,12 +138,17 @@ def compute_rates(xi, e, Vx_s, Vy_s, varpi, q, data, e_grid):
     def _eval_at_e(e_val):
         meta, harm_bins = data[e_val]
         res = reweight_from_harmonics(meta, harm_bins, V_code, sigma_code)
-        H = res['H']
-        K = res['K'] if np.isfinite(res['K']) else 0.0
-        Pe = res['P_x'] if np.isfinite(res['P_x']) else 0.0
-        Pn = res['P_y'] if np.isfinite(res['P_y']) else 0.0
-        Q = res['Q'] if np.isfinite(res['Q']) else 0.0
-        return H, K, Pe, Pn, Q
+        H   = res['H']
+        K   = res['K']   if np.isfinite(res['K'])   else 0.0
+        Pe  = res['P_x'] if np.isfinite(res['P_x']) else 0.0
+        Pn  = res['P_y'] if np.isfinite(res['P_y']) else 0.0
+        Q   = res['Q']   if np.isfinite(res['Q'])   else 0.0
+        sH  = res['sH']   if np.isfinite(res['sH'])   else 0.0
+        sK  = res['sK']   if np.isfinite(res['sK'])   else 0.0
+        sPe = res['sP_x'] if np.isfinite(res['sP_x']) else 0.0
+        sPn = res['sP_y'] if np.isfinite(res['sP_y']) else 0.0
+        sQ  = res['sQ']   if np.isfinite(res['sQ'])   else 0.0
+        return H, K, Pe, Pn, Q, sH, sK, sPe, sPn, sQ
 
     # Use only e > 0 grid points (K formula is singular at e=0)
     eg = e_grid[e_grid > 0] if e_grid[0] == 0.0 else e_grid
@@ -151,31 +156,35 @@ def compute_rates(xi, e, Vx_s, Vy_s, varpi, q, data, e_grid):
     # Snap to nearest grid point if within tolerance
     snap_idx = np.argmin(np.abs(eg - e))
     if abs(eg[snap_idx] - e) < 1e-10:
-        H, K, Pe, Pn, Q = _eval_at_e(eg[snap_idx])
+        H, K, Pe, Pn, Q, sH, sK, sPe, sPn, sQ = _eval_at_e(eg[snap_idx])
     elif e <= eg[0]:
-        H, K, Pe, Pn, Q = _eval_at_e(eg[0])
+        H, K, Pe, Pn, Q, sH, sK, sPe, sPn, sQ = _eval_at_e(eg[0])
     elif e >= eg[-1]:
-        H, K, Pe, Pn, Q = _eval_at_e(eg[-1])
+        H, K, Pe, Pn, Q, sH, sK, sPe, sPn, sQ = _eval_at_e(eg[-1])
     else:
-        idx = int(np.searchsorted(eg, e)) - 1
-        idx = max(0, min(idx, len(eg) - 2))
-        e_lo, e_hi = eg[idx], eg[idx + 1]
+        # 4-point Lagrange interpolation stencil (degree-3 polynomial)
+        n_stencil = min(4, len(eg))
+        idx = int(np.searchsorted(eg, e))
+        i0 = max(0, min(idx - n_stencil // 2, len(eg) - n_stencil))
+        stencil_e = eg[i0:i0 + n_stencil]
+        vals = np.array([_eval_at_e(ei) for ei in stencil_e])
 
-        H_lo, K_lo, Pe_lo, Pn_lo, Q_lo = _eval_at_e(e_lo)
-        H_hi, K_hi, Pe_hi, Pn_hi, Q_hi = _eval_at_e(e_hi)
+        w = np.ones(n_stencil)
+        for k in range(n_stencil):
+            for j in range(n_stencil):
+                if j != k:
+                    w[k] *= (e - stencil_e[j]) / (stencil_e[k] - stencil_e[j])
 
-        frac = (e - e_lo) / (e_hi - e_lo)
-        H  = H_lo  + frac * (H_hi  - H_lo)
-        K  = K_lo  + frac * (K_hi  - K_lo)
-        Pe = Pe_lo + frac * (Pe_hi - Pe_lo)
-        Pn = Pn_lo + frac * (Pn_hi - Pn_lo)
-        Q  = Q_lo  + frac * (Q_hi  - Q_lo)
+        H, K, Pe, Pn, Q = w @ vals[:, :5]
+        sH, sK, sPe, sPn, sQ = np.sqrt((w**2) @ (vals[:, 5:]**2))
 
-    # Rotate P from binary frame to lab frame
+    # Rotate P (and its uncertainty) from binary frame to lab frame
     Px = Pe * cos_w - Pn * sin_w
     Py = Pe * sin_w + Pn * cos_w
+    sPx = np.sqrt(cos_w**2 * sPe**2 + sin_w**2 * sPn**2)
+    sPy = np.sqrt(sin_w**2 * sPe**2 + cos_w**2 * sPn**2)
 
-    return H, K, Px, Py, Q
+    return H, K, Px, Py, Q, sH, sK, sPx, sPy, sQ
 
 
 # ── Precomputed rate tables ───────────────────────────────────────────────────
@@ -184,61 +193,49 @@ def _sigma_code(xi, q):
     return np.sqrt(q) / (2.0 * (1.0 + q)) * np.exp(-xi / 2.0)
 
 
-def precompute_rate_tables(q, data, e_grid, xi_span, n_xi=50, eps_V=0.01):
-    r"""Precompute H, K, Q and P linear-response coefficients on a (xi, e) grid.
+def precompute_rate_tables(q, data, e_grid, xi_span,
+                           n_xi=50, V_max=1.5, n_Ve=13, n_Vn=13):
+    r"""Precompute H, K, Pe, Pn, Q on a 4D ``(xi, e, Ve/σ, Vn/σ)`` grid.
 
-    At each grid point, three calls to ``reweight_from_harmonics``:
-    V=0 (for H, K, Q), V along e-hat (for A_ee, A_ne), V along n-hat
-
-    (for A_en, A_nn).  The acceleration parameter is then
-    P_ehat ≈ A_ee * Ve/σ + A_en * Vn/σ  (linear in velocity).
+    Rates are evaluated exactly at each grid point via
+    ``reweight_from_harmonics`` — no velocity linearization.
+    The resulting tables use cubic interpolation in all four dimensions.
     """
     eg = e_grid[e_grid > 0] if e_grid[0] == 0.0 else e_grid.copy()
     margin = 0.5
     xi_lo = max(xi_span[0] - margin, 0.0)
     xi_hi = xi_span[1] + margin
     xi_arr = np.linspace(xi_lo, xi_hi, n_xi)
+    Ve_arr = np.linspace(-V_max, V_max, n_Ve)
+    Vn_arr = np.linspace(-V_max, V_max, n_Vn)
     n_e = len(eg)
 
-    H_tab  = np.zeros((n_xi, n_e))
-    K_tab  = np.zeros((n_xi, n_e))
-    Q_tab  = np.zeros((n_xi, n_e))
-    A_ee_tab = np.zeros((n_xi, n_e))
-    A_en_tab = np.zeros((n_xi, n_e))
-    A_ne_tab = np.zeros((n_xi, n_e))
-    A_nn_tab = np.zeros((n_xi, n_e))
+    shape = (n_xi, n_e, n_Ve, n_Vn)
+    H_tab  = np.zeros(shape)
+    K_tab  = np.zeros(shape)
+    Pe_tab = np.zeros(shape)
+    Pn_tab = np.zeros(shape)
+    Q_tab  = np.zeros(shape)
 
-    total = n_xi * n_e
+    total = n_xi * n_e * n_Ve * n_Vn
     t0 = _time.time()
+    done = 0
 
     for i, xi in enumerate(xi_arr):
         sc = _sigma_code(xi, q)
         for j, e_val in enumerate(eg):
             meta, hb = data[e_val]
+            for k, Ve_s in enumerate(Ve_arr):
+                for l, Vn_s in enumerate(Vn_arr):
+                    V_code = np.array([Ve_s * sc, Vn_s * sc, 0.0])
+                    res = reweight_from_harmonics(meta, hb, V_code, sc)
+                    H_tab[i, j, k, l]  = res['H']
+                    K_tab[i, j, k, l]  = res['K'] if np.isfinite(res['K']) else 0.0
+                    Pe_tab[i, j, k, l] = res['P_x'] if np.isfinite(res['P_x']) else 0.0
+                    Pn_tab[i, j, k, l] = res['P_y'] if np.isfinite(res['P_y']) else 0.0
+                    Q_tab[i, j, k, l]  = res['Q'] if np.isfinite(res['Q']) else 0.0
+                    done += 1
 
-            # V = 0
-            res0 = reweight_from_harmonics(meta, hb, np.zeros(3), sc)
-            H_tab[i, j] = res0['H']
-            K_tab[i, j] = res0['K'] if np.isfinite(res0['K']) else 0.0
-            Q_tab[i, j] = res0['Q'] if np.isfinite(res0['Q']) else 0.0
-
-            # V along e-hat  (→ A_ee, A_ne)
-            res_e = reweight_from_harmonics(
-                meta, hb, np.array([eps_V * sc, 0.0, 0.0]), sc)
-            Pe_e = res_e['P_x'] if np.isfinite(res_e['P_x']) else 0.0
-            Pn_e = res_e['P_y'] if np.isfinite(res_e['P_y']) else 0.0
-            A_ee_tab[i, j] = Pe_e / eps_V
-            A_ne_tab[i, j] = Pn_e / eps_V
-
-            # V along n-hat  (→ A_en, A_nn)
-            res_n = reweight_from_harmonics(
-                meta, hb, np.array([0.0, eps_V * sc, 0.0]), sc)
-            Pe_n = res_n['P_x'] if np.isfinite(res_n['P_x']) else 0.0
-            Pn_n = res_n['P_y'] if np.isfinite(res_n['P_y']) else 0.0
-            A_en_tab[i, j] = Pe_n / eps_V
-            A_nn_tab[i, j] = Pn_n / eps_V
-
-        done = (i + 1) * n_e
         elapsed = _time.time() - t0
         eta = elapsed / (i + 1) * (n_xi - i - 1)
         print(f"\r  Precomputing rates: {done}/{total} "
@@ -248,46 +245,48 @@ def precompute_rate_tables(q, data, e_grid, xi_span, n_xi=50, eps_V=0.01):
     print(f"\r  Precomputed rates in {_time.time()-t0:.1f}s"
           + " " * 30)
 
+    axes = (xi_arr, eg, Ve_arr, Vn_arr)
+
     def _interp(tab):
         return RegularGridInterpolator(
-            (xi_arr, eg), tab, method='linear',
+            axes, tab, method='cubic',
             bounds_error=False, fill_value=None)
 
     return {
         'xi_grid': xi_arr, 'e_grid': eg, 'q': q,
+        'Ve_grid': Ve_arr, 'Vn_grid': Vn_arr,
         'H': _interp(H_tab), 'K': _interp(K_tab), 'Q': _interp(Q_tab),
-        'A_ee': _interp(A_ee_tab), 'A_en': _interp(A_en_tab),
-        'A_ne': _interp(A_ne_tab), 'A_nn': _interp(A_nn_tab),
+        'Pe': _interp(Pe_tab), 'Pn': _interp(Pn_tab),
     }
 
 
 def compute_rates_fast(xi, e, Vx_s, Vy_s, varpi, tables):
-    """Fast rate evaluation via precomputed interpolation tables."""
+    """Fast rate evaluation via precomputed 4D interpolation tables.
+
+    Uncertainties are not available from precomputed tables and are
+    returned as zero.
+    """
     cos_w, sin_w = np.cos(varpi), np.sin(varpi)
 
     Ve_s =  Vx_s * cos_w + Vy_s * sin_w
     Vn_s = -Vx_s * sin_w + Vy_s * cos_w
 
-    xi_c = np.clip(xi, tables['xi_grid'][0], tables['xi_grid'][-1])
-    e_c  = np.clip(e,  tables['e_grid'][0],  tables['e_grid'][-1])
-    pt = np.array([[xi_c, e_c]])
+    xi_c = np.clip(xi,   tables['xi_grid'][0],  tables['xi_grid'][-1])
+    e_c  = np.clip(e,    tables['e_grid'][0],   tables['e_grid'][-1])
+    Ve_c = np.clip(Ve_s, tables['Ve_grid'][0],  tables['Ve_grid'][-1])
+    Vn_c = np.clip(Vn_s, tables['Vn_grid'][0],  tables['Vn_grid'][-1])
+    pt = np.array([[xi_c, e_c, Ve_c, Vn_c]])
 
-    H = tables['H'](pt).item()
-    K = tables['K'](pt).item()
-    Q = tables['Q'](pt).item()
-
-    A_ee = tables['A_ee'](pt).item()
-    A_en = tables['A_en'](pt).item()
-    A_ne = tables['A_ne'](pt).item()
-    A_nn = tables['A_nn'](pt).item()
-
-    Pe = A_ee * Ve_s + A_en * Vn_s
-    Pn = A_ne * Ve_s + A_nn * Vn_s
+    H  = tables['H'](pt).item()
+    K  = tables['K'](pt).item()
+    Pe = tables['Pe'](pt).item()
+    Pn = tables['Pn'](pt).item()
+    Q  = tables['Q'](pt).item()
 
     Px = Pe * cos_w - Pn * sin_w
     Py = Pe * sin_w + Pn * cos_w
 
-    return H, K, Px, Py, Q
+    return H, K, Px, Py, Q, 0.0, 0.0, 0.0, 0.0, 0.0
 
 
 # ── Chandrasekhar dynamical friction ──────────────────────────────────────────
@@ -369,7 +368,9 @@ def chandrasekhar_decel_constant(V_tilde, xi, q, r_outer_ah):
 
 def solve(q, e0, Vx0_s=0.0, Vy0_s=0.0, varpi0=0.0,
           xi_span=(0.0, 5.0), r_outer_ah=None,
-          chandrasekhar='integral', data_dir=None, **solve_ivp_kwargs):
+          chandrasekhar='integral', data_dir=None,
+          precompute=False, V_max=1.5, n_Ve=13, n_Vn=13, n_xi=50,
+          **solve_ivp_kwargs):
     r"""Integrate the binary-evolution ODEs.
 
     Parameters
@@ -392,6 +393,17 @@ def solve(q, e0, Vx0_s=0.0, Vy0_s=0.0, varpi0=0.0,
         ``'constant'`` (standard erf formula), or ``'none'``.
     data_dir : str or None
         Path to harmonics data directory.
+    precompute : bool
+        If True, precompute rates on a 4D ``(xi, e, Ve/σ, Vn/σ)``
+        grid with cubic interpolation (fast path).  If False (default),
+        evaluate rates on the fly with 4-point Lagrange interpolation
+        in eccentricity (slow path).
+    V_max : float
+        Half-width of the velocity grid in units of σ (precompute only).
+    n_Ve, n_Vn : int
+        Number of velocity grid points along each axis (precompute only).
+    n_xi : int
+        Number of xi grid points (precompute only).
     **solve_ivp_kwargs
         Forwarded to :func:`scipy.integrate.solve_ivp`
         (e.g. ``method``, ``max_step``, ``rtol``, ``atol``).
@@ -399,14 +411,24 @@ def solve(q, e0, Vx0_s=0.0, Vy0_s=0.0, varpi0=0.0,
     Returns
     -------
     sol : OdeResult
-        ``.t`` = xi, ``.y`` = ``(e, Vx/σ, Vy/σ, ϖ, t/T_hard, x̃, ỹ)``.
+        ``.t`` = xi, ``.y`` has 14 rows:
+        ``(e, Vx/σ, Vy/σ, ϖ, t/T_hard, x̃, ỹ,
+          var_e, var_Vx, var_Vy, var_ϖ, var_t, var_x, var_y)``.
         Positions x̃, ỹ are in units of σ · T_hard.
+        The ``var_*`` rows are accumulated variances from Monte Carlo
+        rate uncertainties; take ``sqrt`` for 1-σ bands.
     """
     if r_outer_ah is None:
         r_outer_ah = 4.0 * (1.0 + q)**2 / q
 
     data, e_grid = load_harmonics_data(q, data_dir)
     e_max = e_grid[-1] - 0.01
+
+    tables = None
+    if precompute:
+        tables = precompute_rate_tables(
+            q, data, e_grid, xi_span,
+            n_xi=n_xi, V_max=V_max, n_Ve=n_Ve, n_Vn=n_Vn)
 
     ch_funcs = {
         'integral': chandrasekhar_decel_integral,
@@ -433,8 +455,12 @@ def solve(q, e0, Vx0_s=0.0, Vy0_s=0.0, varpi0=0.0,
         e_cur, Vx_s, Vy_s, varpi, _t, _x, _y = y
         e_cur = np.clip(e_cur, 1e-6, 1.0 - 1e-6)
 
-        H, K, Px, Py, Q = compute_rates(
-            xi, e_cur, Vx_s, Vy_s, varpi, q, data, e_grid)
+        if tables is not None:
+            H, K, Px, Py, Q = compute_rates_fast(
+                xi, e_cur, Vx_s, Vy_s, varpi, tables)
+        else:
+            H, K, Px, Py, Q = compute_rates(
+                xi, e_cur, Vx_s, Vy_s, varpi, q, data, e_grid)
 
         if H < 1e-6:
             H = 1e-6
@@ -560,6 +586,16 @@ if __name__ == '__main__':
                         choices=['integral', 'constant', 'none'],
                         default='integral',
                         help='Chandrasekhar mode (default: integral)')
+    parser.add_argument('--precompute', action='store_true',
+                        help='Precompute 4D rate tables for fast integration')
+    parser.add_argument('--V-max', type=float, default=1.5,
+                        help='Velocity grid half-width in sigma (default: 1.5)')
+    parser.add_argument('--n-Ve', type=int, default=13,
+                        help='Ve grid points (default: 13)')
+    parser.add_argument('--n-Vn', type=int, default=13,
+                        help='Vn grid points (default: 13)')
+    parser.add_argument('--n-xi', type=int, default=50,
+                        help='xi grid points for precomputation (default: 50)')
     args = parser.parse_args()
 
     if args.a0 is not None and args.xi_start is not None:
@@ -573,16 +609,19 @@ if __name__ == '__main__':
 
     print(f"Binary evolution: q={args.q}, e0={args.e0}, "
           f"V0/sigma=({args.Vx0}, {args.Vy0}), varpi0={args.varpi0}")
+    mode = "precomputed 4D tables" if args.precompute else "on-the-fly (4-pt Lagrange)"
     print(f"xi in [{xi_start:.4f}, {args.xi_end}]  "
           f"(a/a_h: {np.exp(-xi_start):.4f} → {np.exp(-args.xi_end):.6f}), "
-          f"Chandrasekhar: {args.chandrasekhar}")
+          f"Chandrasekhar: {args.chandrasekhar}, rates: {mode}")
 
     xi_span = (xi_start, args.xi_end)
 
     # ── Full solution ─────────────────────────────────────────────────────
     print("Integrating (full)...")
     sol = solve(args.q, args.e0, args.Vx0, args.Vy0, args.varpi0,
-                xi_span=xi_span, chandrasekhar=args.chandrasekhar)
+                xi_span=xi_span, chandrasekhar=args.chandrasekhar,
+                precompute=args.precompute, V_max=args.V_max,
+                n_Ve=args.n_Ve, n_Vn=args.n_Vn, n_xi=args.n_xi)
 
     if not sol.success and _status(sol).startswith("FAILED"):
         print(f"\nIntegration {_status(sol)}")
