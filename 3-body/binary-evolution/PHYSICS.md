@@ -347,3 +347,135 @@ physical units, one specifies:
 These fix $a_h = G\mu/(4\sigma^2)$ and the hardening timescale $T_{\rm hard} =
 \sigma/(G\rho\, a_h\, H)$. Alternatively, one can work entirely in
 dimensionless variables: $a/a_h$, $e$, $V/\sigma$, and $t/T_{\rm hard}$.
+
+---
+
+## 9. Uncertainty propagation: variational equations
+
+The evolution parameters $H$, $K$, $\vec P$, $Q$ carry 1-$\sigma$ Monte Carlo
+uncertainties $(\sigma_H,\, \sigma_K,\, \sigma_{P_x},\, \sigma_{P_y},\,
+\sigma_Q)$ from the three-body scattering experiments. These uncertainties
+propagate into the integrated state variables $(e,\, V_x,\, V_y,\, \varpi,\,
+t,\, x,\, y)$.
+
+### 9.1 Why naïve sigma accumulation fails
+
+A tempting first approach is to integrate the absolute uncertainty on each
+state variable as
+
+$$\frac{d\sigma_Y}{d\xi} = \sigma_{f_Y}\,,$$
+
+where $\sigma_{f_Y}$ is the 1-$\sigma$ uncertainty on the RHS $f_Y$ of
+the ODE for $Y$.  This treats the uncertainty at each step as an
+independent additive forcing, giving $\sigma_Y \propto \xi$ (linear growth).
+
+The problem is that this ignores the **state-dependence** of the RHS.  When
+$f_Y$ depends on $Y$ itself—as it does for the velocity equations through
+Chandrasekhar drag—perturbations in $Y$ feed back into $f_Y$, and this
+feedback is missing from the naïve accumulation.
+
+**Toy model.** Consider $dy/dx = -A\,y$ where $A > 0$ has a 1-$\sigma$
+uncertainty $\sigma_A$.  The exact solution is $y(x) = y_0\, e^{-Ax}$, and
+the exact uncertainty from propagating $\sigma_A$ is
+
+$$\sigma_y(x) = \sigma_A\, x\, |y(x)| = \sigma_A\, x\, y_0\, e^{-Ax}\,.$$
+
+This *decays* with $y$: as the system damps, the uncertainty damps too.
+
+The naïve accumulation instead integrates
+$d\sigma_y/dx = \sigma_A\, |y| = \sigma_A\, y_0\, e^{-Ax}$, giving
+
+$$\sigma_y^{\rm naïve}(x) = \frac{\sigma_A\, y_0}{A}\,\bigl(1 - e^{-Ax}\bigr)
+\;\xrightarrow{x\to\infty}\; \frac{\sigma_A\, y_0}{A}\,.$$
+
+This saturates to a constant instead of decaying—wrong by a factor that
+grows as $e^{Ax}$ relative to the true uncertainty.  The missing ingredient
+is the **feedback** $\partial f / \partial y = -A$, which damps perturbations
+at the same rate as it damps the solution.
+
+### 9.2 The variational equation
+
+For a general ODE $dy/d\xi = f(y,\xi)$, the linearised perturbation
+$\delta y$ due to parameter uncertainty satisfies
+
+$$\frac{d(\delta y)}{d\xi} = \frac{\partial f}{\partial y}\,\delta y
++ \delta f_{\rm noise}\,,$$
+
+where the first term is the **Jacobian feedback** and $\delta f_{\rm noise}$
+is the forcing from rate uncertainties.  For a system of equations, $y$ is a
+vector and $\partial f/\partial y$ is the Jacobian matrix $J$.
+
+In the toy model, $J = -A$ and the variational equation is
+$d(\delta y)/dx = -A\,\delta y + \sigma_A\, y$, which has the solution
+
+$$\delta y(x) = e^{-Ax} \int_0^x \sigma_A\, y(x')\, e^{Ax'}\, dx'
+= \sigma_A\, x\, y_0\, e^{-Ax}\,,$$
+
+recovering the correct result.
+
+### 9.3 Diagonal approximation
+
+For the binary evolution system, the state vector is $\vec y = (e,\, V_x,\,
+V_y,\, \varpi,\, t,\, x,\, y)$ and the full Jacobian $J$ is a $7\times 7$
+matrix.  Tracking the full perturbation vector would require solving a
+coupled linear system of 7 extra ODEs per uncertainty source.
+
+We adopt a **diagonal approximation**: track the absolute 1-$\sigma$
+uncertainty $\sigma_Y$ for each state variable $Y$ independently, using only
+the diagonal element $J_{YY} = \partial f_Y / \partial Y$:
+
+$$\boxed{\frac{d\sigma_Y}{d\xi} = \frac{\partial f_Y}{\partial Y}\,\sigma_Y
++ \sigma_{f_Y}\,.}$$
+
+This neglects off-diagonal coupling (how uncertainty in one variable affects
+the rate of another) but captures the dominant feedback effects—particularly
+drag damping on the velocity uncertainty.
+
+### 9.4 Diagonal Jacobian elements
+
+The four independent evolution equations have the following diagonal Jacobian
+elements:
+
+**Eccentricity:** $\partial f_e / \partial e = \partial K / \partial e$.
+
+This is computed from the **analytic derivative of the Lagrange interpolation
+polynomial** used for the eccentricity grid.  The interpolation weights
+$w_k(e) = \prod_{j \ne k} (e - e_j)/(e_k - e_j)$ have derivatives
+
+$$\frac{dw_k}{de} = \sum_{m \ne k}
+\frac{1}{e_k - e_m}\,\prod_{\substack{j \ne k \\ j \ne m}}
+\frac{e - e_j}{e_k - e_j}\,,$$
+
+and $\partial K/\partial e = \sum_k (dw_k/de)\, K_k$.  This uses the same
+stencil values already evaluated for interpolation, so the cost is
+essentially zero.  The polynomial derivative naturally smooths any Monte
+Carlo scatter in the data.
+
+**Velocity ($V_x$):**
+$\partial f_{V_x} / \partial V_x = \partial P_x / \partial V_x
++ \partial \mathrm{Ch}_x / \partial V_x$.
+
+This is computed by **central finite differences**: evaluate the full RHS
+(three-body force $P_x$ plus Chandrasekhar deceleration $\mathrm{Ch}_x$) at
+$V_x \pm \delta$ and take the symmetric difference.  This captures both the
+direct velocity dependence of the three-body rates and the Chandrasekhar
+drag, including the indirect dependence through $H(V_x)$ in the
+Chandrasekhar prefactor.
+
+**Velocity ($V_y$):** analogous to $V_x$.
+
+**Precession:** $\partial f_\varpi / \partial \varpi \approx 0$.  The
+precession rate $Q$ depends on $\varpi$ only through the projection of
+$\vec V$ into the binary frame, which is a weak indirect effect.
+
+### 9.5 Quantities without self-feedback
+
+The time, position, and precession uncertainties have no self-feedback
+because these variables do not appear in their own RHS:
+
+- $d\sigma_t/d\xi = e^\xi\, \sigma_H / H^2$ (unchanged).
+- $d\sigma_x/d\xi = \sigma_{V_x}\, dt/d\xi + |V_x|\,\sigma_t'$
+  (benefits from corrected $\sigma_{V_x}$).
+- $d\sigma_y/d\xi = \sigma_{V_y}\, dt/d\xi + |V_y|\,\sigma_t'$
+  (benefits from corrected $\sigma_{V_y}$).
+- $d\sigma_\varpi/d\xi = \sigma_Q$ (unchanged).

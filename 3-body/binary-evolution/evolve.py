@@ -96,7 +96,33 @@ def load_harmonics_data(q, data_dir=None):
 
 # ── Rate evaluation (with eccentricity interpolation) ─────────────────────────
 
-def compute_rates(xi, e, Vx_s, Vy_s, varpi, q, data, e_grid, n_stencil=4):
+def _lagrange_weights(e, stencil_e):
+    """Lagrange interpolation weights and their derivatives w.r.t. *e*.
+
+    Returns ``(w, dw)`` where ``w[k]`` is the Lagrange basis value at *e*
+    and ``dw[k]`` is its derivative, so that for stencil values ``f_k``,
+    ``sum(w * f) ≈ f(e)`` and ``sum(dw * f) ≈ df/de(e)``.
+    """
+    n = len(stencil_e)
+    w = np.ones(n)
+    dw = np.zeros(n)
+    for k in range(n):
+        for j in range(n):
+            if j != k:
+                w[k] *= (e - stencil_e[j]) / (stencil_e[k] - stencil_e[j])
+    for k in range(n):
+        for m in range(n):
+            if m != k:
+                term = 1.0 / (stencil_e[k] - stencil_e[m])
+                for j in range(n):
+                    if j != k and j != m:
+                        term *= (e - stencil_e[j]) / (stencil_e[k] - stencil_e[j])
+                dw[k] += term
+    return w, dw
+
+
+def compute_rates(xi, e, Vx_s, Vy_s, varpi, q, data, e_grid, n_stencil=4,
+                  return_e_derivs=False):
     """Compute dimensionless evolution parameters at the current state.
 
     Parameters
@@ -116,12 +142,17 @@ def compute_rates(xi, e, Vx_s, Vy_s, varpi, q, data, e_grid, n_stencil=4):
     n_stencil : int
         Number of eccentricity grid points in the Lagrange interpolation
         stencil (2 = linear, 4 = cubic).
+    return_e_derivs : bool
+        If True, also return ``dK_de`` and ``dH_de`` (analytic derivatives
+        of the Lagrange interpolant w.r.t. eccentricity).
 
     Returns
     -------
     H, K, Px, Py, Q, sH, sK, sPx, sPy, sQ : float
         Hardening rate, eccentricity growth rate, lab-frame acceleration
         components, precession parameter, and their 1-sigma uncertainties.
+    dK_de, dH_de : float  (only when *return_e_derivs* is True)
+        Derivatives of K and H with respect to eccentricity.
     """
     cos_w, sin_w = np.cos(varpi), np.sin(varpi)
 
@@ -156,29 +187,35 @@ def compute_rates(xi, e, Vx_s, Vy_s, varpi, q, data, e_grid, n_stencil=4):
     # Use only e > 0 grid points (K formula is singular at e=0)
     eg = e_grid[e_grid > 0] if e_grid[0] == 0.0 else e_grid
 
-    # Snap to nearest grid point if within tolerance
+    dK_de = dH_de = 0.0
+
+    # Fast path: snap / boundary when derivatives are not requested
     snap_idx = np.argmin(np.abs(eg - e))
-    if abs(eg[snap_idx] - e) < 1e-10:
+    use_fast = not return_e_derivs
+    if use_fast and abs(eg[snap_idx] - e) < 1e-10:
         H, K, Pe, Pn, Q, sH, sK, sPe, sPn, sQ = _eval_at_e(eg[snap_idx])
-    elif e <= eg[0]:
+    elif use_fast and e <= eg[0]:
         H, K, Pe, Pn, Q, sH, sK, sPe, sPn, sQ = _eval_at_e(eg[0])
-    elif e >= eg[-1]:
+    elif use_fast and e >= eg[-1]:
         H, K, Pe, Pn, Q, sH, sK, sPe, sPn, sQ = _eval_at_e(eg[-1])
+    elif len(eg) < 2:
+        H, K, Pe, Pn, Q, sH, sK, sPe, sPn, sQ = _eval_at_e(eg[0])
     else:
+        e_eval = np.clip(e, eg[0], eg[-1])
         n_stencil = min(n_stencil, len(eg))
-        idx = int(np.searchsorted(eg, e))
+        idx = int(np.searchsorted(eg, e_eval))
         i0 = max(0, min(idx - n_stencil // 2, len(eg) - n_stencil))
         stencil_e = eg[i0:i0 + n_stencil]
         vals = np.array([_eval_at_e(ei) for ei in stencil_e])
 
-        w = np.ones(n_stencil)
-        for k in range(n_stencil):
-            for j in range(n_stencil):
-                if j != k:
-                    w[k] *= (e - stencil_e[j]) / (stencil_e[k] - stencil_e[j])
+        w, dw = _lagrange_weights(e_eval, stencil_e)
 
         H, K, Pe, Pn, Q = w @ vals[:, :5]
         sH, sK, sPe, sPn, sQ = np.sqrt((w**2) @ (vals[:, 5:]**2))
+
+        if return_e_derivs:
+            dH_de = dw @ vals[:, 0]
+            dK_de = dw @ vals[:, 1]
 
     # Rotate P (and its uncertainty) from binary frame to lab frame
     Px = Pe * cos_w - Pn * sin_w
@@ -186,6 +223,8 @@ def compute_rates(xi, e, Vx_s, Vy_s, varpi, q, data, e_grid, n_stencil=4):
     sPx = np.sqrt(cos_w**2 * sPe**2 + sin_w**2 * sPn**2)
     sPy = np.sqrt(sin_w**2 * sPe**2 + cos_w**2 * sPn**2)
 
+    if return_e_derivs:
+        return H, K, Px, Py, Q, sH, sK, sPx, sPy, sQ, dK_de, dH_de
     return H, K, Px, Py, Q, sH, sK, sPx, sPy, sQ
 
 
@@ -372,7 +411,7 @@ def solve(q, e0, Vx0_s=0.0, Vy0_s=0.0, varpi0=0.0,
           xi_span=(0.0, 5.0), r_outer_ah=None,
           chandrasekhar='integral', data_dir=None,
           precompute=False, V_max=1.5, n_Ve=13, n_Vn=13, n_xi=50,
-          e_interp='cubic', freeze=(),
+          e_interp='cubic', freeze=(), jacobian=True,
           **solve_ivp_kwargs):
     r"""Integrate the binary-evolution ODEs.
 
@@ -407,6 +446,11 @@ def solve(q, e0, Vx0_s=0.0, Vy0_s=0.0, varpi0=0.0,
         Number of velocity grid points along each axis (precompute only).
     n_xi : int
         Number of xi grid points (precompute only).
+    jacobian : bool
+        If True (default), include Jacobian feedback in the uncertainty
+        ODEs (variational-equation approach).  If False, revert to the
+        forcing-only model (no feedback).  Ignored when *precompute*
+        is True (Jacobian not available from precomputed tables).
     **solve_ivp_kwargs
         Forwarded to :func:`scipy.integrate.solve_ivp`
         (e.g. ``method``, ``max_step``, ``rtol``, ``atol``).
@@ -419,7 +463,9 @@ def solve(q, e0, Vx0_s=0.0, Vy0_s=0.0, varpi0=0.0,
           σ_e, σ_Vx, σ_Vy, σ_ϖ, σ_t, σ_x, σ_y)``.
         Positions x̃, ỹ are in units of σ · T_hard.
         The ``σ_*`` rows are deterministic 1-σ uncertainty bands
-        from Monte Carlo rate uncertainties (fully correlated limit).
+        propagated via the variational equation (diagonal
+        approximation) when *jacobian* is True, or via simple
+        forcing-only accumulation otherwise.
     """
     if r_outer_ah is None:
         r_outer_ah = 4.0 * (1.0 + q)**2 / q
@@ -430,6 +476,8 @@ def solve(q, e0, Vx0_s=0.0, Vy0_s=0.0, varpi0=0.0,
         raise ValueError(f"Unknown freeze parameters: {_freeze - _valid_freeze}")
     if _freeze:
         print(f"  Frozen: {', '.join(sorted(_freeze))}")
+
+    _use_jacobian = bool(jacobian)
 
     data, e_grid = load_harmonics_data(q, data_dir)
 
@@ -461,6 +509,21 @@ def solve(q, e0, Vx0_s=0.0, Vy0_s=0.0, varpi0=0.0,
     _rhs_count = [0]
     _rhs_t0 = [None]
 
+    _DELTA_V = 0.01  # finite-difference step for velocity Jacobian (in sigma)
+
+    def _compute_ch(Vx_p, Vy_p, H_p):
+        """Chandrasekhar deceleration at an arbitrary (Vx, Vy, H) state."""
+        Vm = np.hypot(Vx_p, Vy_p)
+        if ch_func is None or Vm < 1e-10:
+            return 0.0, 0.0
+        Jval = ch_func(Vm, xi_cur[0], q, r_outer_ah)
+        pf = _ch_base[0] / H_p
+        return pf * Jval * Vx_p / Vm, pf * Jval * Vy_p / Vm
+
+    # Mutable containers shared between rhs and _compute_ch
+    xi_cur = [0.0]
+    _ch_base = [0.0]
+
     def rhs(xi, y):
         if _rhs_t0[0] is None:
             _rhs_t0[0] = _time.time()
@@ -472,12 +535,25 @@ def solve(q, e0, Vx0_s=0.0, Vy0_s=0.0, varpi0=0.0,
                   end='', flush=True)
 
         (e_cur, Vx_s, Vy_s, varpi, _t, _x, _y,
-         _se, sig_Vx, sig_Vy, _sw, _st, _sx, _sy) = y
+         sig_e, sig_Vx, sig_Vy, _sw, _st, _sx, _sy) = y
         e_cur = np.clip(e_cur, 1e-6, 1.0 - 1e-6)
 
+        # Shared state for _compute_ch helper
+        xi_cur[0] = xi
+        _ch_base[0] = 16.0 * np.pi * (1.0 + q)**2 * np.exp(xi) / q
+
+        need_jac = _use_jacobian and tables is None
+
+        # ── Nominal rates ─────────────────────────────────────────────
+        dK_de = 0.0
         if tables is not None:
             H, K, Px, Py, Q, sH, sK, sPx, sPy, sQ = compute_rates_fast(
                 xi, e_cur, Vx_s, Vy_s, varpi, tables)
+        elif need_jac:
+            (H, K, Px, Py, Q, sH, sK, sPx, sPy, sQ,
+             dK_de, _dH_de) = compute_rates(
+                xi, e_cur, Vx_s, Vy_s, varpi, q, data, e_grid,
+                n_stencil=_n_stencil, return_e_derivs=True)
         else:
             H, K, Px, Py, Q, sH, sK, sPx, sPy, sQ = compute_rates(
                 xi, e_cur, Vx_s, Vy_s, varpi, q, data, e_grid,
@@ -486,15 +562,45 @@ def solve(q, e0, Vx0_s=0.0, Vy0_s=0.0, varpi0=0.0,
         if H < 1e-6:
             H = 1e-6
 
-        # Chandrasekhar deceleration
-        Ch_x = Ch_y = 0.0
-        V_mag = np.hypot(Vx_s, Vy_s)
-        if ch_func is not None and V_mag > 1e-10:
-            J = ch_func(V_mag, xi, q, r_outer_ah)
-            prefactor = 16.0 * np.pi * (1.0 + q)**2 * np.exp(xi) / (q * H)
-            Ch_x = prefactor * J * Vx_s / V_mag
-            Ch_y = prefactor * J * Vy_s / V_mag
+        Ch_x, Ch_y = _compute_ch(Vx_s, Vy_s, H)
 
+        # ── Diagonal Jacobian via finite differences ──────────────────
+        J_e = dK_de if need_jac else 0.0
+        J_Vx = J_Vy = 0.0
+
+        if need_jac:
+            dv = _DELTA_V
+            if 'Vx' not in _freeze:
+                Hp, _, Pxp, _, _, *_ = compute_rates(
+                    xi, e_cur, Vx_s + dv, Vy_s, varpi, q, data, e_grid,
+                    n_stencil=_n_stencil)
+                if Hp < 1e-6: Hp = 1e-6
+                Chxp, _ = _compute_ch(Vx_s + dv, Vy_s, Hp)
+
+                Hm, _, Pxm, _, _, *_ = compute_rates(
+                    xi, e_cur, Vx_s - dv, Vy_s, varpi, q, data, e_grid,
+                    n_stencil=_n_stencil)
+                if Hm < 1e-6: Hm = 1e-6
+                Chxm, _ = _compute_ch(Vx_s - dv, Vy_s, Hm)
+
+                J_Vx = ((Pxp + Chxp) - (Pxm + Chxm)) / (2.0 * dv)
+
+            if 'Vy' not in _freeze:
+                Hp, _, _, Pyp, _, *_ = compute_rates(
+                    xi, e_cur, Vx_s, Vy_s + dv, varpi, q, data, e_grid,
+                    n_stencil=_n_stencil)
+                if Hp < 1e-6: Hp = 1e-6
+                _, Chyp = _compute_ch(Vx_s, Vy_s + dv, Hp)
+
+                Hm, _, _, Pym, _, *_ = compute_rates(
+                    xi, e_cur, Vx_s, Vy_s - dv, varpi, q, data, e_grid,
+                    n_stencil=_n_stencil)
+                if Hm < 1e-6: Hm = 1e-6
+                _, Chym = _compute_ch(Vx_s, Vy_s - dv, Hm)
+
+                J_Vy = ((Pyp + Chyp) - (Pym + Chym)) / (2.0 * dv)
+
+        # ── Assemble derivatives ──────────────────────────────────────
         dt_dxi = np.exp(xi) / H
         sig_t_rate = np.exp(xi) * sH / H**2
 
@@ -503,14 +609,19 @@ def solve(q, e0, Vx0_s=0.0, Vy0_s=0.0, varpi0=0.0,
         dVy = 0.0 if 'Vy'    in _freeze else Py + Ch_y
         dw  = 0.0 if 'varpi' in _freeze else Q
 
+        sigma_fVx = np.sqrt(sPx**2 + (Ch_x * sH / H)**2)
+        sigma_fVy = np.sqrt(sPy**2 + (Ch_y * sH / H)**2)
+
+        d_sig_e  = 0.0 if 'e'     in _freeze else J_e * sig_e + sK
+        d_sig_Vx = 0.0 if 'Vx'    in _freeze else J_Vx * sig_Vx + sigma_fVx
+        d_sig_Vy = 0.0 if 'Vy'    in _freeze else J_Vy * sig_Vy + sigma_fVy
+        d_sig_w  = 0.0 if 'varpi' in _freeze else sQ
+
         return [de, dVx, dVy, dw,
                 dt_dxi,
                 Vx_s * dt_dxi,
                 Vy_s * dt_dxi,
-                0.0 if 'e'     in _freeze else sK,
-                0.0 if 'Vx'    in _freeze else np.sqrt(sPx**2 + (Ch_x * sH / H)**2),
-                0.0 if 'Vy'    in _freeze else np.sqrt(sPy**2 + (Ch_y * sH / H)**2),
-                0.0 if 'varpi' in _freeze else sQ,
+                d_sig_e, d_sig_Vx, d_sig_Vy, d_sig_w,
                 sig_t_rate,
                 sig_Vx * dt_dxi + abs(Vx_s) * sig_t_rate,
                 sig_Vy * dt_dxi + abs(Vy_s) * sig_t_rate]
@@ -535,7 +646,7 @@ def solve(q, e0, Vx0_s=0.0, Vy0_s=0.0, varpi0=0.0,
 
 
 def solve_simple(q, e0, xi_span=(0.0, 5.0), data_dir=None, e_interp='cubic',
-                 **solve_ivp_kwargs):
+                 jacobian=True, **solve_ivp_kwargs):
     r"""Integrate the reduced (V=0) binary-evolution ODEs.
 
     Only eccentricity and time evolve; velocity and precession are ignored.
@@ -554,6 +665,8 @@ def solve_simple(q, e0, xi_span=(0.0, 5.0), data_dir=None, e_interp='cubic',
         e_grid = coarse
         _n_stencil = 2
 
+    _use_jacobian = bool(jacobian)
+
     e_max = e_grid[-1] - 0.01
 
     _rhs_count = [0]
@@ -569,15 +682,23 @@ def solve_simple(q, e0, xi_span=(0.0, 5.0), data_dir=None, e_interp='cubic',
                   f"[{_rhs_count[0]} evals, {elapsed:.1f}s]   ",
                   end='', flush=True)
 
-        e_cur, _t, _se, _st = y
+        e_cur, _t, sig_e, _st = y
         e_cur = np.clip(e_cur, 1e-6, 1.0 - 1e-6)
-        H, K, _, _, _, sH, sK, _, _, _ = compute_rates(
-            xi, e_cur, 0.0, 0.0, 0.0, q, data, e_grid,
-            n_stencil=_n_stencil)
+
+        if _use_jacobian:
+            H, K, _, _, _, sH, sK, _, _, _, dK_de, _ = compute_rates(
+                xi, e_cur, 0.0, 0.0, 0.0, q, data, e_grid,
+                n_stencil=_n_stencil, return_e_derivs=True)
+        else:
+            H, K, _, _, _, sH, sK, _, _, _ = compute_rates(
+                xi, e_cur, 0.0, 0.0, 0.0, q, data, e_grid,
+                n_stencil=_n_stencil)
+            dK_de = 0.0
+
         if H < 1e-6:
             H = 1e-6
         return [K, np.exp(xi) / H,
-                sK, np.exp(xi) * sH / H**2]
+                dK_de * sig_e + sK, np.exp(xi) * sH / H**2]
 
     def _e_boundary(xi, y):
         return e_max - y[0]
@@ -648,6 +769,8 @@ if __name__ == '__main__':
                         help='Freeze Vy at its initial value')
     parser.add_argument('--freeze-varpi', action='store_true',
                         help='Freeze varpi at its initial value')
+    parser.add_argument('--no-jacobian', action='store_true',
+                        help='Disable Jacobian feedback in uncertainty ODEs')
     args = parser.parse_args()
 
     if args.a0 is not None and args.xi_start is not None:
@@ -667,14 +790,18 @@ if __name__ == '__main__':
     if args.freeze_Vy:    freeze.add('Vy')
     if args.freeze_varpi: freeze.add('varpi')
 
+    use_jacobian = not args.no_jacobian
+
     print(f"Binary evolution: q={args.q}, e0={args.e0}, "
           f"V0/sigma=({args.Vx0}, {args.Vy0}), varpi0={args.varpi0}")
     mode = "precomputed 4D tables" if args.precompute else "on-the-fly (4-pt Lagrange)"
     if args.coarse:
         mode = "on-the-fly (coarse, linear)"
+    jac_str = "on" if use_jacobian else "off"
     print(f"xi in [{xi_start:.4f}, {args.xi_end}]  "
           f"(a/a_h: {np.exp(-xi_start):.4f} → {np.exp(-args.xi_end):.6f}), "
-          f"Chandrasekhar: {args.chandrasekhar}, rates: {mode}")
+          f"Chandrasekhar: {args.chandrasekhar}, rates: {mode}, "
+          f"Jacobian: {jac_str}")
 
     xi_span = (xi_start, args.xi_end)
 
@@ -684,7 +811,7 @@ if __name__ == '__main__':
                 xi_span=xi_span, chandrasekhar=args.chandrasekhar,
                 precompute=args.precompute, V_max=args.V_max,
                 n_Ve=args.n_Ve, n_Vn=args.n_Vn, n_xi=args.n_xi,
-                e_interp=e_interp, freeze=freeze)
+                e_interp=e_interp, freeze=freeze, jacobian=use_jacobian)
 
     if not sol.success and _status(sol).startswith("FAILED"):
         print(f"\nIntegration {_status(sol)}")
@@ -711,7 +838,7 @@ if __name__ == '__main__':
     # ── V=0 reference solution ────────────────────────────────────────────
     print("Integrating (V=0 reference)...")
     sol0 = solve_simple(args.q, args.e0, xi_span=xi_span,
-                        e_interp=e_interp)
+                        e_interp=e_interp, jacobian=use_jacobian)
 
     xi0 = sol0.t
     e0_ref, t0_ref, sig_e0, sig_t0 = sol0.y
