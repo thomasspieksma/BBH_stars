@@ -803,6 +803,7 @@ if __name__ == '__main__':
             R_y_arr        = np.empty(N_ah)
             sR_y_arr       = np.empty(N_ah)
             F_total_arr    = np.empty((N_ah, 3))
+            P_comp_total_arr = np.empty((N_ah, 3))
 
             for i, sig in enumerate(sigma):
                 V = Vr * sig * dir_hat
@@ -840,6 +841,10 @@ if __name__ == '__main__':
                 else:
                     F_Ch = np.zeros(3)
                 F_total_arr[i] = r['F'] + F_Ch
+                if abs(r['P']) > 0:
+                    P_comp_total_arr[i] = -(mu / (2 * sig)) * F_total_arr[i] / r['P']
+                else:
+                    P_comp_total_arr[i] = np.nan
 
             results[key] = dict(
                 H=H_arr, sH=sH_arr, K=K_arr, sK=sK_arr,
@@ -849,7 +854,7 @@ if __name__ == '__main__':
                 P_x=P_x_arr, sP_x=sP_x_arr, P_y=P_y_arr, sP_y=sP_y_arr,
                 P_z=P_z_arr, sP_z=sP_z_arr,
                 R_x=R_x_arr, sR_x=sR_x_arr, R_y=R_y_arr, sR_y=sR_y_arr,
-                F_total=F_total_arr,
+                F_total=F_total_arr, P_comp_total=P_comp_total_arr,
             )
             print(f"  Computed: V/sigma={Vr:+d}, dir={dir_label}")
 
@@ -873,6 +878,7 @@ if __name__ == '__main__':
         Rx_c     = np.empty(N_ah);  sRx_c    = np.empty(N_ah)
         Ry_c     = np.empty(N_ah);  sRy_c    = np.empty(N_ah)
         Ftot_c   = np.empty((N_ah, 3))
+        Ptot_c   = np.empty((N_ah, 3))
 
         for i, sig in enumerate(sigma):
             V = sig * V_cart
@@ -894,6 +900,10 @@ if __name__ == '__main__':
             V_hat = V_cart / V_cart_mag
             F_Ch = (4.0 * np.pi * rho / sig**2) * J * V_hat
             Ftot_c[i] = r['F'] + F_Ch
+            if abs(r['P']) > 0:
+                Ptot_c[i] = -(mu / (2 * sig)) * Ftot_c[i] / r['P']
+            else:
+                Ptot_c[i] = np.nan
 
         cart_results.append(dict(
             label=cart_label,
@@ -904,7 +914,7 @@ if __name__ == '__main__':
             P_x=Px_c, sP_x=sPx_c, P_y=Py_c, sP_y=sPy_c,
             P_z=Pz_c, sP_z=sPz_c,
             R_x=Rx_c, sR_x=sRx_c, R_y=Ry_c, sR_y=sRy_c,
-            F_total=Ftot_c,
+            F_total=Ftot_c, P_comp_total=Ptot_c,
         ))
         print(f"  Computed: {cart_label}")
 
@@ -1031,6 +1041,7 @@ if __name__ == '__main__':
     Pcomp_keys = ['P_x', 'P_y', 'P_z']
     Pcomp_err_keys = ['sP_x', 'sP_y', 'sP_z']
     Pcomp_labels = [r'$P_{\hat e}$', r'$P_{\hat n}$', r'$P_{\hat L}$']
+    line_colors_P = {}
     for k, ax in enumerate(axes_P):
         seen_zero = False
         for (dir_label, Vr), res in results.items():
@@ -1040,8 +1051,17 @@ if __name__ == '__main__':
                 seen_zero = True
             Pk  = res[Pcomp_keys[k]]
             sPk = res[Pcomp_err_keys[k]]
-            ax.plot(1/a_h, Pk, label=_label(Vr, dir_label))
+            line, = ax.plot(1/a_h, Pk, label=_label(Vr, dir_label))
             ax.fill_between(1/a_h, Pk - sPk, Pk + sPk, alpha=0.08)
+            if k == 0:
+                line_colors_P[(dir_label, Vr)] = line.get_color()
+        for (dir_label, Vr), res in results.items():
+            if Vr == 0:
+                continue
+            lbl_tot = _label(Vr, dir_label) + ' +Ch'
+            ax.plot(1/a_h, res['P_comp_total'][:, k], '--',
+                    color=line_colors_P[(dir_label, Vr)],
+                    label=lbl_tot if k == 0 else None)
         for rc in cart_results:
             Pk_c  = rc[Pcomp_keys[k]]
             sPk_c = rc[Pcomp_err_keys[k]]
