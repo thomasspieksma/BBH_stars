@@ -801,7 +801,7 @@ int main(int argc, char* argv[]) {
     double e = std::stod(argv[2]);
     
     double Tmax = 8.0 * pow(1.0 + q, 3) / pow(q, 1.5) * 1e10 / 49076.0;
-    bool split_by_Tcut = true;  // toggle to enable/disable multi‑Tcut output
+    bool split_by_Tcut = false;  // toggle to enable/disable multi‑Tcut output
 
     int max_steps = 1e9;
     int N = 1e4;
