@@ -7,11 +7,11 @@ import re
 # Configuration
 ###################################################
 
-data_dir = "results_bonetti_Tcut"
+data_dir = "../Data/results-precession-soft"
 
 # Detect data files and extract q,e values
 files = [f for f in os.listdir(data_dir) if f.startswith("q=") and f.endswith(".txt")]
-pattern = re.compile(r"q=([0-9.]+)_e=([0-9.]+)\.txt")
+pattern = re.compile(r"q=([0-9.]+)_e=([0-9.]+)\_Tcut=100000000000.txt")
 q_list = []
 e_list = []
 parsed_files = []

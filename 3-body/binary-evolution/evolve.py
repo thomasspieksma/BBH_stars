@@ -94,6 +94,22 @@ def load_harmonics_data(q, data_dir=None):
     return data, e_grid
 
 
+_N_STATE = 7
+_N_RATES = 5   # H, K, Pe, Pn, Q
+
+
+def _pack_upper_tri(C):
+    """Symmetric 7x7 matrix -> upper-triangle flat array (28 elements)."""
+    n = C.shape[0]
+    flat = np.empty(n * (n + 1) // 2)
+    k = 0
+    for i in range(n):
+        for j in range(i, n):
+            flat[k] = C[i, j]
+            k += 1
+    return flat
+
+
 # ── Rate evaluation (with eccentricity interpolation) ─────────────────────────
 
 def _lagrange_weights(e, stencil_e):
@@ -122,7 +138,7 @@ def _lagrange_weights(e, stencil_e):
 
 
 def compute_rates(xi, e, Vx_s, Vy_s, varpi, q, data, e_grid, n_stencil=4,
-                  return_e_derivs=False):
+                  return_e_derivs=False, return_file_info=False):
     """Compute dimensionless evolution parameters at the current state.
 
     Parameters
@@ -143,16 +159,24 @@ def compute_rates(xi, e, Vx_s, Vy_s, varpi, q, data, e_grid, n_stencil=4,
         Number of eccentricity grid points in the Lagrange interpolation
         stencil (2 = linear, 4 = cubic).
     return_e_derivs : bool
-        If True, also return ``dK_de`` and ``dH_de`` (analytic derivatives
-        of the Lagrange interpolant w.r.t. eccentricity).
+        If True, also return analytic derivatives of all five rates
+        w.r.t. eccentricity from the Lagrange interpolant.
+    return_file_info : bool
+        If True, also return a dict with per-file stencil information
+        (indices into the e>0 grid, Lagrange weights, and per-file
+        binary-frame uncertainties).
 
     Returns
     -------
     H, K, Px, Py, Q, sH, sK, sPx, sPy, sQ : float
         Hardening rate, eccentricity growth rate, lab-frame acceleration
         components, precession parameter, and their 1-sigma uncertainties.
-    dK_de, dH_de : float  (only when *return_e_derivs* is True)
-        Derivatives of K and H with respect to eccentricity.
+    dK_de, dH_de, dPx_de, dPy_de, dQ_de : float  (only when *return_e_derivs* is True)
+        Derivatives of all five rates w.r.t. eccentricity (P in lab frame).
+    file_info : dict  (only when *return_file_info* is True)
+        ``stencil_indices`` (indices into eg), ``weights`` (Lagrange
+        weights), ``file_sigmas`` (n_stencil x 5 array of per-file
+        binary-frame uncertainties: sH, sK, sPe, sPn, sQ).
     """
     cos_w, sin_w = np.cos(varpi), np.sin(varpi)
 
@@ -187,20 +211,26 @@ def compute_rates(xi, e, Vx_s, Vy_s, varpi, q, data, e_grid, n_stencil=4,
     # Use only e > 0 grid points (K formula is singular at e=0)
     eg = e_grid[e_grid > 0] if e_grid[0] == 0.0 else e_grid
 
-    dK_de = dH_de = 0.0
+    dK_de = dH_de = dPe_de = dPn_de = dQ_de = 0.0
+    _finfo = None
 
     # Fast path: snap / boundary when derivatives are not requested
     snap_idx = np.argmin(np.abs(eg - e))
-    use_fast = not return_e_derivs
+    use_fast = not return_e_derivs and not return_file_info
     if use_fast and abs(eg[snap_idx] - e) < 1e-10:
         H, K, Pe, Pn, Q, sH, sK, sPe, sPn, sQ = _eval_at_e(eg[snap_idx])
+        _finfo_idx = snap_idx
     elif use_fast and e <= eg[0]:
         H, K, Pe, Pn, Q, sH, sK, sPe, sPn, sQ = _eval_at_e(eg[0])
+        _finfo_idx = 0
     elif use_fast and e >= eg[-1]:
         H, K, Pe, Pn, Q, sH, sK, sPe, sPn, sQ = _eval_at_e(eg[-1])
+        _finfo_idx = len(eg) - 1
     elif len(eg) < 2:
         H, K, Pe, Pn, Q, sH, sK, sPe, sPn, sQ = _eval_at_e(eg[0])
+        _finfo_idx = 0
     else:
+        _finfo_idx = None
         e_eval = np.clip(e, eg[0], eg[-1])
         n_stencil = min(n_stencil, len(eg))
         idx = int(np.searchsorted(eg, e_eval))
@@ -214,8 +244,26 @@ def compute_rates(xi, e, Vx_s, Vy_s, varpi, q, data, e_grid, n_stencil=4,
         sH, sK, sPe, sPn, sQ = np.sqrt((w**2) @ (vals[:, 5:]**2))
 
         if return_e_derivs:
-            dH_de = dw @ vals[:, 0]
-            dK_de = dw @ vals[:, 1]
+            dH_de  = dw @ vals[:, 0]
+            dK_de  = dw @ vals[:, 1]
+            dPe_de = dw @ vals[:, 2]
+            dPn_de = dw @ vals[:, 3]
+            dQ_de  = dw @ vals[:, 4]
+
+        if return_file_info:
+            _finfo = {
+                'stencil_indices': np.arange(i0, i0 + n_stencil),
+                'weights': w,
+                'file_sigmas': vals[:, 5:],   # (n_stencil, 5): sH,sK,sPe,sPn,sQ
+            }
+
+    # Single-file path: build trivial file_info
+    if return_file_info and _finfo is None:
+        _finfo = {
+            'stencil_indices': np.array([_finfo_idx]),
+            'weights': np.array([1.0]),
+            'file_sigmas': np.array([[sH, sK, sPe, sPn, sQ]]),
+        }
 
     # Rotate P (and its uncertainty) from binary frame to lab frame
     Px = Pe * cos_w - Pn * sin_w
@@ -223,9 +271,14 @@ def compute_rates(xi, e, Vx_s, Vy_s, varpi, q, data, e_grid, n_stencil=4,
     sPx = np.sqrt(cos_w**2 * sPe**2 + sin_w**2 * sPn**2)
     sPy = np.sqrt(sin_w**2 * sPe**2 + cos_w**2 * sPn**2)
 
+    result = (H, K, Px, Py, Q, sH, sK, sPx, sPy, sQ)
     if return_e_derivs:
-        return H, K, Px, Py, Q, sH, sK, sPx, sPy, sQ, dK_de, dH_de
-    return H, K, Px, Py, Q, sH, sK, sPx, sPy, sQ
+        dPx_de = dPe_de * cos_w - dPn_de * sin_w
+        dPy_de = dPe_de * sin_w + dPn_de * cos_w
+        result = result + (dK_de, dH_de, dPx_de, dPy_de, dQ_de)
+    if return_file_info:
+        result = result + (_finfo,)
+    return result
 
 
 # ── Precomputed rate tables ───────────────────────────────────────────────────
@@ -412,6 +465,7 @@ def solve(q, e0, Vx0_s=0.0, Vy0_s=0.0, varpi0=0.0,
           chandrasekhar='integral', data_dir=None,
           precompute=False, V_max=1.5, n_Ve=13, n_Vn=13, n_xi=50,
           e_interp='cubic', freeze=(), jacobian=True,
+          full_covariance=True,
           **solve_ivp_kwargs):
     r"""Integrate the binary-evolution ODEs.
 
@@ -448,9 +502,15 @@ def solve(q, e0, Vx0_s=0.0, Vy0_s=0.0, varpi0=0.0,
         Number of xi grid points (precompute only).
     jacobian : bool
         If True (default), include Jacobian feedback in the uncertainty
-        ODEs (variational-equation approach).  If False, revert to the
-        forcing-only model (no feedback).  Ignored when *precompute*
-        is True (Jacobian not available from precomputed tables).
+        ODEs.  If False, revert to the forcing-only model (no feedback).
+        Ignored when *precompute* is True.
+    full_covariance : bool
+        If True (default), propagate uncertainties via the per-file
+        response-matrix model dF/dξ = J F + G, where each data file
+        contributes independent systematic noise sources.  The state
+        vector has 7 + 7 × 5 × N_files elements.  If False, use the
+        diagonal approximation (14-component state vector).
+        Requires *jacobian* = True and *precompute* = False.
     **solve_ivp_kwargs
         Forwarded to :func:`scipy.integrate.solve_ivp`
         (e.g. ``method``, ``max_step``, ``rtol``, ``atol``).
@@ -458,14 +518,13 @@ def solve(q, e0, Vx0_s=0.0, Vy0_s=0.0, varpi0=0.0,
     Returns
     -------
     sol : OdeResult
-        ``.t`` = xi, ``.y`` has 14 rows:
-        ``(e, Vx/σ, Vy/σ, ϖ, t/T_hard, x̃, ỹ,
+        ``.t`` = xi, ``.y`` always has 14 rows:
+        ``(e, Vx/σ, Vy/σ, ϖ, t/T_ref, x̃, ỹ,
           σ_e, σ_Vx, σ_Vy, σ_ϖ, σ_t, σ_x, σ_y)``.
-        Positions x̃, ỹ are in units of σ · T_hard.
-        The ``σ_*`` rows are deterministic 1-σ uncertainty bands
-        propagated via the variational equation (diagonal
-        approximation) when *jacobian* is True, or via simple
-        forcing-only accumulation otherwise.
+        When *full_covariance* is True, σ values are extracted as
+        ``sqrt(diag(C))`` where ``C = F @ F.T``.  The upper-triangle
+        covariance history is in ``sol.cov`` (shape ``(28, n_steps)``)
+        and the raw response matrix in ``sol.F``.
     """
     if r_outer_ah is None:
         r_outer_ah = 4.0 * (1.0 + q)**2 / q
@@ -478,6 +537,12 @@ def solve(q, e0, Vx0_s=0.0, Vy0_s=0.0, varpi0=0.0,
         print(f"  Frozen: {', '.join(sorted(_freeze))}")
 
     _use_jacobian = bool(jacobian)
+    _full_cov = bool(full_covariance)
+    if _full_cov:
+        if precompute:
+            raise ValueError("full_covariance requires on-the-fly evaluation "
+                             "(precompute must be False)")
+        _use_jacobian = True
 
     data, e_grid = load_harmonics_data(q, data_dir)
 
@@ -490,6 +555,14 @@ def solve(q, e0, Vx0_s=0.0, Vy0_s=0.0, varpi0=0.0,
               f"(e = {e_grid[0]:.1f} … {e_grid[-1]:.1f}), linear interp")
 
     e_max = e_grid[-1] - 0.01
+
+    # Number of per-file noise sources for the response-matrix model
+    _eg_pos = e_grid[e_grid > 0] if e_grid[0] == 0.0 else e_grid
+    _n_noise = _N_RATES * len(_eg_pos) if _full_cov else 0
+    if _full_cov:
+        print(f"  Response matrix: {len(_eg_pos)} files × "
+              f"{_N_RATES} rates = {_n_noise} noise sources "
+              f"({_N_STATE + _N_STATE * _n_noise} total state)")
 
     tables = None
     if precompute:
@@ -510,6 +583,7 @@ def solve(q, e0, Vx0_s=0.0, Vy0_s=0.0, varpi0=0.0,
     _rhs_t0 = [None]
 
     _DELTA_V = 0.01  # finite-difference step for velocity Jacobian (in sigma)
+    _DELTA_W = 0.01  # finite-difference step for varpi Jacobian (in rad)
 
     def _compute_ch(Vx_p, Vy_p, H_p):
         """Chandrasekhar deceleration at an arbitrary (Vx, Vy, H) state."""
@@ -534,8 +608,7 @@ def solve(q, e0, Vx0_s=0.0, Vy0_s=0.0, varpi0=0.0,
                   f"[{_rhs_count[0]} evals, {elapsed:.1f}s]   ",
                   end='', flush=True)
 
-        (e_cur, Vx_s, Vy_s, varpi, _t, _x, _y,
-         sig_e, sig_Vx, sig_Vy, _sw, _st, _sx, _sy) = y
+        e_cur, Vx_s, Vy_s, varpi = y[0], y[1], y[2], y[3]
         e_cur = np.clip(e_cur, 1e-6, 1.0 - 1e-6)
 
         # Shared state for _compute_ch helper
@@ -545,26 +618,158 @@ def solve(q, e0, Vx0_s=0.0, Vy0_s=0.0, varpi0=0.0,
         need_jac = _use_jacobian and tables is None
 
         # ── Nominal rates ─────────────────────────────────────────────
-        dK_de = 0.0
+        _file_info = None
         if tables is not None:
             H, K, Px, Py, Q, sH, sK, sPx, sPy, sQ = compute_rates_fast(
                 xi, e_cur, Vx_s, Vy_s, varpi, tables)
+            dK_de = dH_de_val = dPx_de_val = dPy_de_val = dQ_de_val = 0.0
+        elif _full_cov:
+            (H, K, Px, Py, Q, sH, sK, sPx, sPy, sQ,
+             dK_de, dH_de_val, dPx_de_val, dPy_de_val,
+             dQ_de_val, _file_info) = compute_rates(
+                xi, e_cur, Vx_s, Vy_s, varpi, q, data, e_grid,
+                n_stencil=_n_stencil, return_e_derivs=True,
+                return_file_info=True)
         elif need_jac:
             (H, K, Px, Py, Q, sH, sK, sPx, sPy, sQ,
-             dK_de, _dH_de) = compute_rates(
+             dK_de, dH_de_val, dPx_de_val, dPy_de_val,
+             dQ_de_val) = compute_rates(
                 xi, e_cur, Vx_s, Vy_s, varpi, q, data, e_grid,
                 n_stencil=_n_stencil, return_e_derivs=True)
         else:
             H, K, Px, Py, Q, sH, sK, sPx, sPy, sQ = compute_rates(
                 xi, e_cur, Vx_s, Vy_s, varpi, q, data, e_grid,
                 n_stencil=_n_stencil)
+            dK_de = dH_de_val = dPx_de_val = dPy_de_val = dQ_de_val = 0.0
 
         if H < 1e-6:
             H = 1e-6
 
         Ch_x, Ch_y = _compute_ch(Vx_s, Vy_s, H)
 
-        # ── Diagonal Jacobian via finite differences ──────────────────
+        exi = np.exp(xi)
+        exi_H = exi / H
+        exi_H2 = exi / H**2
+
+        # ── State derivatives ─────────────────────────────────────────
+        de  = 0.0 if 'e'     in _freeze else K
+        dVx = 0.0 if 'Vx'    in _freeze else Px + Ch_x
+        dVy = 0.0 if 'Vy'    in _freeze else Py + Ch_y
+        dw  = 0.0 if 'varpi' in _freeze else Q
+        dt_dxi = exi_H
+        dy_state = [de, dVx, dVy, dw, dt_dxi,
+                    Vx_s * dt_dxi, Vy_s * dt_dxi]
+
+        # ── Full covariance mode ──────────────────────────────────────
+        if _full_cov:
+            # Build 7x7 Jacobian
+            J = np.zeros((_N_STATE, _N_STATE))
+
+            # Column 0: eccentricity derivatives (analytic)
+            ch_over_H = np.array([Ch_x, Ch_y]) / H if H > 1e-10 else np.zeros(2)
+            J[0, 0] = dK_de
+            J[1, 0] = dPx_de_val - ch_over_H[0] * dH_de_val
+            J[2, 0] = dPy_de_val - ch_over_H[1] * dH_de_val
+            J[3, 0] = dQ_de_val
+            J[4, 0] = -exi_H2 * dH_de_val
+            J[5, 0] = Vx_s * J[4, 0]
+            J[6, 0] = Vy_s * J[4, 0]
+
+            # Columns 1-2: velocity derivatives (finite differences)
+            dv = _DELTA_V
+            for col, (dVx_off, dVy_off) in enumerate([(dv, 0.0), (0.0, dv)],
+                                                       start=1):
+                if ('Vx' in _freeze and col == 1) or \
+                   ('Vy' in _freeze and col == 2):
+                    continue
+                Hp, Kp, Pxp, Pyp, Qp, *_ = compute_rates(
+                    xi, e_cur, Vx_s + dVx_off, Vy_s + dVy_off, varpi,
+                    q, data, e_grid, n_stencil=_n_stencil)
+                if Hp < 1e-6: Hp = 1e-6
+                Chxp, Chyp = _compute_ch(Vx_s + dVx_off, Vy_s + dVy_off, Hp)
+
+                Hm, Km, Pxm, Pym, Qm, *_ = compute_rates(
+                    xi, e_cur, Vx_s - dVx_off, Vy_s - dVy_off, varpi,
+                    q, data, e_grid, n_stencil=_n_stencil)
+                if Hm < 1e-6: Hm = 1e-6
+                Chxm, Chym = _compute_ch(Vx_s - dVx_off, Vy_s - dVy_off, Hm)
+
+                inv2d = 1.0 / (2.0 * dv)
+                J[0, col] = (Kp - Km) * inv2d
+                J[1, col] = ((Pxp + Chxp) - (Pxm + Chxm)) * inv2d
+                J[2, col] = ((Pyp + Chyp) - (Pym + Chym)) * inv2d
+                J[3, col] = (Qp - Qm) * inv2d
+                dt_p = exi / max(Hp, 1e-6)
+                dt_m = exi / max(Hm, 1e-6)
+                J[4, col] = (dt_p - dt_m) * inv2d
+
+            # dx/dxi = Vx * dt/dxi  =>  d(dx/dxi)/dVx = dt/dxi + Vx * d(dt/dxi)/dVx
+            J[5, 1] = dt_dxi + Vx_s * J[4, 1]
+            J[5, 2] = Vx_s * J[4, 2]
+            J[6, 1] = Vy_s * J[4, 1]
+            J[6, 2] = dt_dxi + Vy_s * J[4, 2]
+
+            # Column 3: varpi derivatives (finite differences)
+            if 'varpi' not in _freeze:
+                dw_fd = _DELTA_W
+                Hp, Kp, Pxp, Pyp, Qp, *_ = compute_rates(
+                    xi, e_cur, Vx_s, Vy_s, varpi + dw_fd,
+                    q, data, e_grid, n_stencil=_n_stencil)
+                if Hp < 1e-6: Hp = 1e-6
+                Chxp, Chyp = _compute_ch(Vx_s, Vy_s, Hp)
+
+                Hm, Km, Pxm, Pym, Qm, *_ = compute_rates(
+                    xi, e_cur, Vx_s, Vy_s, varpi - dw_fd,
+                    q, data, e_grid, n_stencil=_n_stencil)
+                if Hm < 1e-6: Hm = 1e-6
+                Chxm, Chym = _compute_ch(Vx_s, Vy_s, Hm)
+
+                inv2d = 1.0 / (2.0 * dw_fd)
+                J[0, 3] = (Kp - Km) * inv2d
+                J[1, 3] = ((Pxp + Chxp) - (Pxm + Chxm)) * inv2d
+                J[2, 3] = ((Pyp + Chyp) - (Pym + Chym)) * inv2d
+                J[3, 3] = (Qp - Qm) * inv2d
+                dt_p = exi / max(Hp, 1e-6)
+                dt_m = exi / max(Hm, 1e-6)
+                J[4, 3] = (dt_p - dt_m) * inv2d
+                J[5, 3] = Vx_s * J[4, 3]
+                J[6, 3] = Vy_s * J[4, 3]
+
+            # Binary-frame loading matrix B (7x5): maps unit perturbation
+            # in (H, K, Pe, Pn, Q) to state derivatives
+            cos_w = np.cos(varpi)
+            sin_w = np.sin(varpi)
+            B = np.zeros((_N_STATE, _N_RATES))
+            ch_over_H_arr = (np.array([Ch_x, Ch_y]) / H
+                             if H > 1e-10 else np.zeros(2))
+            B[0, 1] = 1.0                                            # e  <- K
+            B[1, 0] = -ch_over_H_arr[0]                              # Vx <- H
+            B[1, 2] = cos_w;  B[1, 3] = -sin_w                      # Vx <- Pe,Pn
+            B[2, 0] = -ch_over_H_arr[1]                              # Vy <- H
+            B[2, 2] = sin_w;  B[2, 3] = cos_w                       # Vy <- Pe,Pn
+            B[3, 4] = 1.0                                            # w  <- Q
+            B[4, 0] = -exi_H2                                        # t  <- H
+            B[5, 0] = -Vx_s * exi_H2                                 # x  <- H
+            B[6, 0] = -Vy_s * exi_H2                                 # y  <- H
+
+            # Per-file loading G (7 x n_noise): only stencil files contribute
+            G = np.zeros((_N_STATE, _n_noise))
+            st_idx = _file_info['stencil_indices']
+            st_w   = _file_info['weights']
+            st_sig = _file_info['file_sigmas']    # (n_stencil, 5)
+            for s in range(len(st_idx)):
+                base = _N_RATES * st_idx[s]
+                for r in range(_N_RATES):
+                    G[:, base + r] = st_w[s] * st_sig[s, r] * B[:, r]
+
+            # Response-matrix equation: dF/dxi = J @ F + G
+            F = y[_N_STATE:].reshape(_N_STATE, _n_noise)
+            dF = J @ F + G
+            return list(dy_state) + dF.ravel().tolist()
+
+        # ── Diagonal mode ─────────────────────────────────────────────
+        sig_e, sig_Vx, sig_Vy = y[7], y[8], y[9]
+
         J_e = dK_de if need_jac else 0.0
         J_Vx = J_Vy = 0.0
 
@@ -600,15 +805,7 @@ def solve(q, e0, Vx0_s=0.0, Vy0_s=0.0, varpi0=0.0,
 
                 J_Vy = ((Pyp + Chyp) - (Pym + Chym)) / (2.0 * dv)
 
-        # ── Assemble derivatives ──────────────────────────────────────
-        dt_dxi = np.exp(xi) / H
-        sig_t_rate = np.exp(xi) * sH / H**2
-
-        de  = 0.0 if 'e'     in _freeze else K
-        dVx = 0.0 if 'Vx'    in _freeze else Px + Ch_x
-        dVy = 0.0 if 'Vy'    in _freeze else Py + Ch_y
-        dw  = 0.0 if 'varpi' in _freeze else Q
-
+        sig_t_rate = exi * sH / H**2
         sigma_fVx = np.sqrt(sPx**2 + (Ch_x * sH / H)**2)
         sigma_fVy = np.sqrt(sPy**2 + (Ch_y * sH / H)**2)
 
@@ -617,11 +814,7 @@ def solve(q, e0, Vx0_s=0.0, Vy0_s=0.0, varpi0=0.0,
         d_sig_Vy = 0.0 if 'Vy'    in _freeze else J_Vy * sig_Vy + sigma_fVy
         d_sig_w  = 0.0 if 'varpi' in _freeze else sQ
 
-        return [de, dVx, dVy, dw,
-                dt_dxi,
-                Vx_s * dt_dxi,
-                Vy_s * dt_dxi,
-                d_sig_e, d_sig_Vx, d_sig_Vy, d_sig_w,
+        return list(dy_state) + [d_sig_e, d_sig_Vx, d_sig_Vy, d_sig_w,
                 sig_t_rate,
                 sig_Vx * dt_dxi + abs(Vx_s) * sig_t_rate,
                 sig_Vy * dt_dxi + abs(Vy_s) * sig_t_rate]
@@ -632,8 +825,12 @@ def solve(q, e0, Vx0_s=0.0, Vy0_s=0.0, varpi0=0.0,
     _e_boundary.terminal = True
     _e_boundary.direction = -1
 
-    y0 = [e0, Vx0_s, Vy0_s, varpi0, 0.0, 0.0, 0.0,
-          0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    n_F = _N_STATE * _n_noise
+    if _full_cov:
+        y0 = [e0, Vx0_s, Vy0_s, varpi0, 0.0, 0.0, 0.0] + [0.0] * n_F
+    else:
+        y0 = [e0, Vx0_s, Vy0_s, varpi0, 0.0, 0.0, 0.0,
+              0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 
     defaults = dict(method='RK45', rtol=1e-8, atol=1e-10, dense_output=True,
                     events=_e_boundary)
@@ -642,6 +839,22 @@ def solve(q, e0, Vx0_s=0.0, Vy0_s=0.0, varpi0=0.0,
     sol = solve_ivp(rhs, xi_span, y0, **defaults)
     elapsed = _time.time() - _rhs_t0[0] if _rhs_t0[0] else 0
     print(f"\r  Done: {_rhs_count[0]} evals in {elapsed:.1f}s" + " " * 30)
+
+    if _full_cov:
+        n_steps = sol.y.shape[1]
+        F_raw = sol.y[_N_STATE:, :]        # (n_F, n_steps)
+        sig = np.zeros((_N_STATE, n_steps))
+        n_cov_tri = _N_STATE * (_N_STATE + 1) // 2
+        cov_tri = np.zeros((n_cov_tri, n_steps))
+        for k in range(n_steps):
+            F = F_raw[:, k].reshape(_N_STATE, _n_noise)
+            C = F @ F.T
+            sig[:, k] = np.sqrt(np.maximum(np.diag(C), 0.0))
+            cov_tri[:, k] = _pack_upper_tri(C)
+        sol.y = np.vstack([sol.y[:_N_STATE, :], sig])
+        sol.cov = cov_tri
+        sol.F = F_raw
+
     return sol
 
 
@@ -651,6 +864,11 @@ def solve_simple(q, e0, xi_span=(0.0, 5.0), data_dir=None, e_interp='cubic',
 
     Only eccentricity and time evolve; velocity and precession are ignored.
     Useful as a reference solution.
+
+    Uncertainty is propagated with the same per-file response-matrix model
+    used by :func:`solve`: a ``2 × N_noise`` matrix *F* tracks how each
+    independent file-rate noise source perturbs ``(e, t)``, and the
+    covariance is ``C = F @ F^T``.
 
     Returns
     -------
@@ -669,6 +887,13 @@ def solve_simple(q, e0, xi_span=(0.0, 5.0), data_dir=None, e_interp='cubic',
 
     e_max = e_grid[-1] - 0.01
 
+    _N_S = 2  # reduced state: (e, t)
+    eg = e_grid[e_grid > 0] if e_grid[0] == 0.0 else e_grid
+    _n_noise = _N_RATES * len(eg)
+    print(f"  (V=0 ref) Response matrix: {len(eg)} files × "
+          f"{_N_RATES} rates = {_n_noise} noise sources "
+          f"({_N_S + _N_S * _n_noise} total state)")
+
     _rhs_count = [0]
     _rhs_t0 = [None]
 
@@ -682,30 +907,49 @@ def solve_simple(q, e0, xi_span=(0.0, 5.0), data_dir=None, e_interp='cubic',
                   f"[{_rhs_count[0]} evals, {elapsed:.1f}s]   ",
                   end='', flush=True)
 
-        e_cur, _t, sig_e, _st = y
-        e_cur = np.clip(e_cur, 1e-6, 1.0 - 1e-6)
+        e_cur = np.clip(y[0], 1e-6, 1.0 - 1e-6)
 
-        if _use_jacobian:
-            H, K, _, _, _, sH, sK, _, _, _, dK_de, _ = compute_rates(
-                xi, e_cur, 0.0, 0.0, 0.0, q, data, e_grid,
-                n_stencil=_n_stencil, return_e_derivs=True)
-        else:
-            H, K, _, _, _, sH, sK, _, _, _ = compute_rates(
-                xi, e_cur, 0.0, 0.0, 0.0, q, data, e_grid,
-                n_stencil=_n_stencil)
-            dK_de = 0.0
+        (H, K, _, _, _, sH, sK, _, _, _,
+         dK_de, dH_de, *_, _file_info) = compute_rates(
+            xi, e_cur, 0.0, 0.0, 0.0, q, data, e_grid,
+            n_stencil=_n_stencil, return_e_derivs=True,
+            return_file_info=True)
 
         if H < 1e-6:
             H = 1e-6
-        return [K, np.exp(xi) / H,
-                dK_de * sig_e + sK, np.exp(xi) * sH / H**2]
+
+        exi = np.exp(xi)
+        exi_H2 = exi / H**2
+
+        # Reduced 2x2 Jacobian for (e, t)
+        J = np.zeros((_N_S, _N_S))
+        if _use_jacobian:
+            J[0, 0] = dK_de                  # de/dxi = K  => dK/de
+            J[1, 0] = -exi_H2 * dH_de        # dt/dxi = e^xi/H  => d/de
+
+        # Per-file loading G (2 x n_noise)
+        G = np.zeros((_N_S, _n_noise))
+        st_idx = _file_info['stencil_indices']
+        st_w   = _file_info['weights']
+        st_sig = _file_info['file_sigmas']    # (n_stencil, 5)
+        for s in range(len(st_idx)):
+            base = _N_RATES * st_idx[s]
+            G[0, base + 1] = st_w[s] * st_sig[s, 1]              # e <- sK
+            G[1, base + 0] = st_w[s] * st_sig[s, 0] * (-exi_H2)  # t <- sH
+
+        # Response-matrix equation: dF/dxi = J @ F + G
+        F = y[_N_S:].reshape(_N_S, _n_noise)
+        dF = J @ F + G
+
+        return [K, exi / H] + dF.ravel().tolist()
 
     def _e_boundary(xi, y):
         return e_max - y[0]
     _e_boundary.terminal = True
     _e_boundary.direction = -1
 
-    y0 = [e0, 0.0, 0.0, 0.0]
+    n_F = _N_S * _n_noise
+    y0 = [e0, 0.0] + [0.0] * n_F
 
     defaults = dict(method='RK45', rtol=1e-8, atol=1e-10, dense_output=True,
                     events=_e_boundary)
@@ -714,6 +958,17 @@ def solve_simple(q, e0, xi_span=(0.0, 5.0), data_dir=None, e_interp='cubic',
     sol = solve_ivp(rhs, xi_span, y0, **defaults)
     elapsed = _time.time() - _rhs_t0[0] if _rhs_t0[0] else 0
     print(f"\r  (V=0 ref) Done: {_rhs_count[0]} evals in {elapsed:.1f}s" + " " * 20)
+
+    # Post-process: C = F @ F^T => sigma_e, sigma_t
+    n_steps = sol.y.shape[1]
+    sig = np.zeros((_N_S, n_steps))
+    F_raw = sol.y[_N_S:, :]
+    for k in range(n_steps):
+        F = F_raw[:, k].reshape(_N_S, _n_noise)
+        C = F @ F.T
+        sig[:, k] = np.sqrt(np.maximum(np.diag(C), 0.0))
+    sol.y = np.vstack([sol.y[:_N_S, :], sig])
+
     return sol
 
 
@@ -771,6 +1026,9 @@ if __name__ == '__main__':
                         help='Freeze varpi at its initial value')
     parser.add_argument('--no-jacobian', action='store_true',
                         help='Disable Jacobian feedback in uncertainty ODEs')
+    parser.add_argument('--diagonal', action='store_true',
+                        help='Use diagonal uncertainty propagation instead '
+                             'of the full covariance matrix (default)')
     args = parser.parse_args()
 
     if args.a0 is not None and args.xi_start is not None:
@@ -791,17 +1049,23 @@ if __name__ == '__main__':
     if args.freeze_varpi: freeze.add('varpi')
 
     use_jacobian = not args.no_jacobian
+    use_full_cov = not args.diagonal
 
     print(f"Binary evolution: q={args.q}, e0={args.e0}, "
           f"V0/sigma=({args.Vx0}, {args.Vy0}), varpi0={args.varpi0}")
     mode = "precomputed 4D tables" if args.precompute else "on-the-fly (4-pt Lagrange)"
     if args.coarse:
         mode = "on-the-fly (coarse, linear)"
-    jac_str = "on" if use_jacobian else "off"
+    if use_full_cov:
+        unc_str = "full covariance (7×7)"
+    elif use_jacobian:
+        unc_str = "diagonal + Jacobian"
+    else:
+        unc_str = "diagonal (no Jacobian)"
     print(f"xi in [{xi_start:.4f}, {args.xi_end}]  "
           f"(a/a_h: {np.exp(-xi_start):.4f} → {np.exp(-args.xi_end):.6f}), "
           f"Chandrasekhar: {args.chandrasekhar}, rates: {mode}, "
-          f"Jacobian: {jac_str}")
+          f"uncertainties: {unc_str}")
 
     xi_span = (xi_start, args.xi_end)
 
@@ -811,7 +1075,8 @@ if __name__ == '__main__':
                 xi_span=xi_span, chandrasekhar=args.chandrasekhar,
                 precompute=args.precompute, V_max=args.V_max,
                 n_Ve=args.n_Ve, n_Vn=args.n_Vn, n_xi=args.n_xi,
-                e_interp=e_interp, freeze=freeze, jacobian=use_jacobian)
+                e_interp=e_interp, freeze=freeze, jacobian=use_jacobian,
+                full_covariance=use_full_cov)
 
     if not sol.success and _status(sol).startswith("FAILED"):
         print(f"\nIntegration {_status(sol)}")
@@ -872,9 +1137,24 @@ if __name__ == '__main__':
         ax.plot(x_pos[-1], y_pos[-1], 's', ms=5, label='end')
         n_ell = min(10, len(xi))
         ell_idx = np.linspace(0, len(xi) - 1, n_ell, dtype=int)
+        _has_cov = hasattr(sol, 'cov') and sol.cov is not None
         for ii in ell_idx:
+            if _has_cov:
+                Cxx = sol.cov[25, ii]
+                Cxy = sol.cov[26, ii]
+                Cyy = sol.cov[27, ii]
+                cov2 = np.array([[Cxx, Cxy], [Cxy, Cyy]])
+                eigvals, eigvecs = np.linalg.eigh(cov2)
+                eigvals = np.maximum(eigvals, 0.0)
+                w_ell = 2 * np.sqrt(eigvals[1])
+                h_ell = 2 * np.sqrt(eigvals[0])
+                angle = np.degrees(np.arctan2(eigvecs[1, 1], eigvecs[0, 1]))
+            else:
+                w_ell = 2 * sig_x[ii]
+                h_ell = 2 * sig_y[ii]
+                angle = 0.0
             ell = Ellipse((x_pos[ii], y_pos[ii]),
-                          width=2 * sig_x[ii], height=2 * sig_y[ii],
+                          width=w_ell, height=h_ell, angle=angle,
                           facecolor='C0', alpha=0.15, edgecolor='none')
             ax.add_patch(ell)
         ax.set(xlabel=r'$x\;/\;(\sigma\, T_{\rm hard})$',

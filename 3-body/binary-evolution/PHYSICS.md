@@ -291,10 +291,16 @@ dictionary with keys `H`, `K`, `P_x`, `P_y`, `Q`, `F`, `tau`,
 ### 8.1 ODE integration
 
 Use `scipy.integrate.solve_ivp` with an adaptive-step method (e.g., RK45 or
-DOP853). The independent variable is $\xi$ and the state vector is $\vec y =
-(e,\, V_x,\, V_y,\, \varpi)$ (four components). Physical time can be
-recovered by integrating $dt/d\xi = \sigma/(G\rho\, a\, H)$ alongside the
-main system.
+DOP853). The independent variable is $\xi$ and the 7 state variables are
+$(e,\, \tilde V_x,\, \tilde V_y,\, \varpi,\, \tilde t,\, \tilde x,\,
+\tilde y)$.  In full-covariance mode (default), the $7 \times 5 N_{\rm files}$
+response matrix $F$ is appended (see Section 9.3).  In diagonal
+mode (`--diagonal`), 7 uncertainty variables are appended instead
+(14-component ODE).
+
+The $V{=}0$ reference solver (`solve_simple`) also uses the per-file
+response-matrix model, with a reduced $2\times 2$ Jacobian acting on $(e, t)$
+(see Section 9.3).
 
 ### 8.2 Evaluating the RHS
 
@@ -413,69 +419,231 @@ $$\delta y(x) = e^{-Ax} \int_0^x \sigma_A\, y(x')\, e^{Ax'}\, dx'
 
 recovering the correct result.
 
-### 9.3 Diagonal approximation
+### 9.3 Per-file response-matrix model (default)
 
-For the binary evolution system, the state vector is $\vec y = (e,\, V_x,\,
-V_y,\, \varpi,\, t,\, x,\, y)$ and the full Jacobian $J$ is a $7\times 7$
-matrix.  Tracking the full perturbation vector would require solving a
-coupled linear system of 7 extra ODEs per uncertainty source.
+The code supports two uncertainty propagation modes, controlled by the
+`--diagonal` CLI flag (or the `full_covariance` argument to `solve()`).
 
-We adopt a **diagonal approximation**: track the absolute 1-$\sigma$
-uncertainty $\sigma_Y$ for each state variable $Y$ independently, using only
-the diagonal element $J_{YY} = \partial f_Y / \partial Y$:
+#### Noise correlation structure
 
-$$\boxed{\frac{d\sigma_Y}{d\xi} = \frac{\partial f_Y}{\partial Y}\,\sigma_Y
-+ \sigma_{f_Y}\,.}$$
+The evolution rates are computed from Monte Carlo scattering data stored in
+per-eccentricity files.  Two properties determine the correlation structure
+of the rate uncertainties:
 
-This neglects off-diagonal coupling (how uncertainty in one variable affects
-the rate of another) but captures the dominant feedback effects—particularly
-drag damping on the velocity uncertainty.
+1. **Independent between files.**  Each eccentricity file comes from a
+   separate Monte Carlo campaign; the sampling errors in file $k$ are
+   statistically independent of those in file $j \ne k$.
 
-### 9.4 Diagonal Jacobian elements
+2. **Systematic within a file.**  When the same file is evaluated at
+   different velocities or semi-major axes (via reweighting of the same
+   scattering outcomes), the Monte Carlo error is a fixed but unknown
+   property of the file—not a new random draw.  The *magnitude* of the
+   uncertainty may change with the reweighting, but the underlying error
+   *realization* is the same.
 
-The four independent evolution equations have the following diagonal Jacobian
-elements:
+#### Response-matrix equation
 
-**Eccentricity:** $\partial f_e / \partial e = \partial K / \partial e$.
+For each file $k$ and each rate $r \in \{H, K, P_{\hat e}, P_{\hat n}, Q\}$,
+define a **response vector** $\vec f_{k,r}(\xi) \in \mathbb R^7$ satisfying
 
-This is computed from the **analytic derivative of the Lagrange interpolation
-polynomial** used for the eccentricity grid.  The interpolation weights
+$$\boxed{\frac{d\vec f_{k,r}}{d\xi}
+= J\,\vec f_{k,r}
++ w_k\bigl(e(\xi)\bigr)\;\sigma_{R_{k,r}}\bigl(V(\xi)\bigr)\;\vec b_r\,,
+\qquad \vec f_{k,r}(0) = 0\,.}$$
+
+Here $J$ is the $7\times 7$ Jacobian (Section 9.4), $w_k(e)$ is the Lagrange
+interpolation weight for file $k$ at the current eccentricity, $\sigma_{R_{k,r}}$
+is the Monte Carlo uncertainty on rate $r$ from file $k$ at the current
+velocity, and $\vec b_r$ is column $r$ of the loading matrix $B$
+(Section 9.5).  Files outside the current Lagrange stencil have $w_k = 0$,
+so they receive no new forcing, but their accumulated response vectors still
+evolve via the Jacobian term $J\,\vec f$.
+
+Collecting all response vectors into a $7 \times N_{\rm noise}$ matrix
+$F = [\vec f_{0,0},\, \vec f_{0,1},\, \ldots,\, \vec f_{N_{\rm files}-1,4}]$
+where $N_{\rm noise} = 5\, N_{\rm files}$, the equation becomes
+
+$$\frac{dF}{d\xi} = J\, F + G\,,$$
+
+where $G$ is the $7 \times N_{\rm noise}$ loading matrix (Section 9.5).
+
+The full $7\times 7$ **covariance matrix** is
+
+$$C = F\, F^\top = \sum_{k,r} \vec f_{k,r}\,\vec f_{k,r}^\top\,,$$
+
+since all noise sources are independent unit-variance normals by
+construction (the variance is absorbed into $G$).  Marginal uncertainties
+are $\sigma_Y = \sqrt{C_{YY}}$ and off-diagonal entries capture
+correlations.
+
+**State vector size:** $7 + 7 \times 5 \times N_{\rm files}$.  Typical
+values: $q=1$ with 10 files gives 357 elements; $q=0.2$ with 55 files gives
+1932 elements.  All are easily tractable for `solve_ivp`.
+
+**Early-time behaviour.**  For small $\xi$, $F \approx G\,\xi$, so
+$\sigma_Y \propto \xi$ (linear growth) and the signal-to-noise ratio
+$f_Y / \sigma_{f_Y}$ is constant from the first step—matching the physical
+expectation that a force with a definite sign produces a definite
+displacement.
+
+**Stencil transitions.**  When $e$ evolves enough that a new file $j$ enters
+the Lagrange stencil, its response vectors start from zero and build up
+gradually as $w_j$ grows.  There is no artificial correlation between the new
+file's uncertainty and the uncertainty accumulated from previous files.
+
+#### $V{=}0$ reference (`solve_simple`)
+
+The $V{=}0$ reference solver uses the same per-file response-matrix model but
+with a reduced $2\times 2$ state $(e, t)$.  The Jacobian is
+
+$$J = \begin{pmatrix}
+\partial K / \partial e & 0 \\
+-e^\xi H^{-2}\,\partial H/\partial e & 0
+\end{pmatrix},$$
+
+and the loading is $G_{0,\,5k+1} = w_k\,\sigma_{K_k}$ (eccentricity from $K$
+noise) and $G_{1,\,5k+0} = -w_k\,\sigma_{H_k}\,e^\xi / H^2$ (time from $H$
+noise).  The $2\times 2$ covariance is $C = F\,F^\top$ as usual.
+
+This ensures an apples-to-apples comparison of the $V{=}0$ and full-solver
+uncertainty bands.
+
+#### Why the diagonal model overcounts at stencil transitions
+
+The scalar variational equation
+$d\sigma_Y/d\xi = J_{YY}\,\sigma_Y + \sigma_{f_Y}$
+uses the *aggregate* Lagrange-interpolated uncertainty
+$\sigma_{f_Y} = \sqrt{\sum_k w_k^2\,\sigma_{R_k}^2}$ as the forcing at
+every step.  This correctly treats each step's noise as systematic
+(linear growth), but it implicitly assumes the aggregate noise at
+consecutive steps is *perfectly correlated*—the same systematic bias
+accumulating coherently.
+
+In reality, when the Lagrange stencil shifts (a new file enters and an old
+file exits), the aggregate at step $n$ and at step $n{+}1$ are composed of
+*partially different* files.  The new file contributes a genuinely
+independent bias that should be added in *quadrature*, not coherently.
+Consecutive 4-point stencils share 3 of 4 files, so the overcounting is
+moderate per transition but compounds over many shifts.  For a fine
+eccentricity grid (e.g., $q{=}0.2$ with 54 files and ${\sim}40{-}50$
+stencil transitions), the overcounting factor is roughly
+$\sqrt{N_{\rm transitions}} \sim 7$.
+
+The per-file response-matrix model avoids this entirely: each file has its
+own response vector, accumulated continuously as the weight $w_k(e)$
+changes.  Files appearing in multiple consecutive stencils are tracked as
+a single, continuous noise source with no double-counting.
+
+#### Diagonal fallback (`--diagonal`)
+
+Only the 7 diagonal uncertainties $\sigma_Y$ are tracked (14-component state
+vector: 7 state + 7 uncertainties).  Each evolves independently:
+
+$$\frac{d\sigma_Y}{d\xi} = J_{YY}\,\sigma_Y + \sigma_{f_Y}\,.$$
+
+This uses aggregate lab-frame uncertainties and neglects off-diagonal
+coupling, but captures the dominant Jacobian feedback (particularly
+Chandrasekhar drag damping on velocity uncertainty).  It is cheaper (fewer
+finite-difference evaluations) and useful for quick checks, but it
+overcounts noise at stencil transitions as described above.
+
+### 9.4 Jacobian structure
+
+The Jacobian $J_{ij} = \partial f_i / \partial y_j$ is a $7\times 7$
+matrix.  In the full-covariance mode all columns are computed; in diagonal
+mode only the diagonal elements $J_{00}$, $J_{11}$, $J_{22}$ are used
+(with $J_{33} \approx 0$).
+
+**Column 0 (eccentricity derivatives)** — analytic from the Lagrange
+interpolant.  The interpolation weights
 $w_k(e) = \prod_{j \ne k} (e - e_j)/(e_k - e_j)$ have derivatives
 
 $$\frac{dw_k}{de} = \sum_{m \ne k}
 \frac{1}{e_k - e_m}\,\prod_{\substack{j \ne k \\ j \ne m}}
 \frac{e - e_j}{e_k - e_j}\,,$$
 
-and $\partial K/\partial e = \sum_k (dw_k/de)\, K_k$.  This uses the same
-stencil values already evaluated for interpolation, so the cost is
-essentially zero.  The polynomial derivative naturally smooths any Monte
-Carlo scatter in the data.
+giving $\partial R / \partial e = \sum_k (dw_k/de)\, R_k$ for any rate
+$R \in \{H, K, P_x, P_y, Q\}$.  The Jacobian entries are:
 
-**Velocity ($V_x$):**
-$\partial f_{V_x} / \partial V_x = \partial P_x / \partial V_x
-+ \partial \mathrm{Ch}_x / \partial V_x$.
+| Row | Entry |
+|-----|-------|
+| 0 ($e$) | $\partial K / \partial e$ |
+| 1 ($\tilde V_x$) | $\partial P_x/\partial e - (\mathrm{Ch}_x / H)\,\partial H/\partial e$ |
+| 2 ($\tilde V_y$) | $\partial P_y/\partial e - (\mathrm{Ch}_y / H)\,\partial H/\partial e$ |
+| 3 ($\varpi$) | $\partial Q / \partial e$ |
+| 4 ($\tilde t$) | $-e^\xi H^{-2}\,\partial H/\partial e$ |
+| 5 ($\tilde x$) | $\tilde V_x \cdot J_{40}$ |
+| 6 ($\tilde y$) | $\tilde V_y \cdot J_{40}$ |
 
-This is computed by **central finite differences**: evaluate the full RHS
-(three-body force $P_x$ plus Chandrasekhar deceleration $\mathrm{Ch}_x$) at
-$V_x \pm \delta$ and take the symmetric difference.  This captures both the
-direct velocity dependence of the three-body rates and the Chandrasekhar
-drag, including the indirect dependence through $H(V_x)$ in the
-Chandrasekhar prefactor.
+These use the same stencil values already evaluated for interpolation, so the
+cost is essentially zero.
 
-**Velocity ($V_y$):** analogous to $V_x$.
+**Columns 1–2 (velocity derivatives)** — central finite differences at
+$V_x \pm \delta$ (or $V_y \pm \delta$), capturing all five rates and the
+Chandrasekhar terms.  Each column requires 2 extra `compute_rates` calls
+plus 2 Chandrasekhar evaluations.  Rows 5–6 use the chain rule:
+$\partial(V_x \, dt/d\xi)/\partial V_x = dt/d\xi + V_x\,\partial(dt/d\xi)/\partial V_x$.
 
-**Precession:** $\partial f_\varpi / \partial \varpi \approx 0$.  The
-precession rate $Q$ depends on $\varpi$ only through the projection of
-$\vec V$ into the binary frame, which is a weak indirect effect.
+**Column 3 (precession derivatives)** — central finite differences at
+$\varpi \pm \delta_\varpi$ (2 extra `compute_rates` calls).  This captures
+the dependence of rates on $\varpi$ through the velocity projection into the
+binary frame.  In the diagonal mode this column is omitted
+($J_{33} \approx 0$).
 
-### 9.5 Quantities without self-feedback
+**Columns 4–6** are zero: $t$, $x$, $y$ do not appear in any RHS.
 
-The time, position, and precession uncertainties have no self-feedback
-because these variables do not appear in their own RHS:
+**Cost:** In full-covariance mode the RHS evaluates `compute_rates`
+$1 + 4 + 2 = 7$ times per step (nominal + 2 per velocity axis + 2 for
+$\varpi$).  In diagonal mode: $1 + 4 = 5$ times.
 
-- $d\sigma_t/d\xi = e^\xi\, \sigma_H / H^2$ (unchanged).
-- $d\sigma_x/d\xi = \sigma_{V_x}\, dt/d\xi + |V_x|\,\sigma_t'$
-  (benefits from corrected $\sigma_{V_x}$).
-- $d\sigma_y/d\xi = \sigma_{V_y}\, dt/d\xi + |V_y|\,\sigma_t'$
-  (benefits from corrected $\sigma_{V_y}$).
-- $d\sigma_\varpi/d\xi = \sigma_Q$ (unchanged).
+### 9.5 Loading matrix and per-file noise sources
+
+The $7\times 5$ **loading matrix** $B$ maps a unit perturbation in the five
+binary-frame rates $(H,\, K,\, P_{\hat e},\, P_{\hat n},\, Q)$ to the
+seven state derivatives, incorporating the $\varpi$-rotation from binary
+frame to lab frame:
+
+$$B = \begin{pmatrix}
+0 & 1 & 0 & 0 & 0 \\
+-\mathrm{Ch}_x/H & 0 & \cos\varpi & -\sin\varpi & 0 \\
+-\mathrm{Ch}_y/H & 0 & \sin\varpi & \phantom{-}\cos\varpi & 0 \\
+0 & 0 & 0 & 0 & 1 \\
+-e^\xi/H^2 & 0 & 0 & 0 & 0 \\
+-\tilde V_x\,e^\xi/H^2 & 0 & 0 & 0 & 0 \\
+-\tilde V_y\,e^\xi/H^2 & 0 & 0 & 0 & 0
+\end{pmatrix}$$
+
+The per-file loading matrix $G$ (7 × $N_{\rm noise}$) has mostly zero
+columns; only the files in the current Lagrange stencil contribute:
+
+$$G_{:,\,5k+r} = w_k(e)\;\sigma_{R_{k,r}}(V)\;\vec b_r$$
+
+for each stencil file $k$ and rate $r \in \{0,\ldots,4\}$, where
+$\sigma_{R_{k,r}}$ is the Monte Carlo uncertainty on rate $r$ from file $k$
+at the current velocity (in binary-frame coordinates).
+
+**Approximation:** The five rate uncertainties within each file are treated
+as independent noise sources.  In reality, $H_k$, $K_k$, $P_{{\hat e},k}$,
+$P_{{\hat n},k}$, $Q_k$ from the same scattering data are correlated; fully
+capturing this would require the $5\times 5$ within-file covariance matrix
+from `reweight_from_harmonics`, which is not currently computed.  This is a
+minor approximation compared to the systematic-vs-stochastic distinction.
+
+In diagonal mode, the equivalent forcing terms are
+$\sigma_{f_e} = \sigma_K$,
+$\sigma_{f_{V_x}} = \sqrt{\sigma_{P_x}^2 + (\mathrm{Ch}_x\,\sigma_H/H)^2}$,
+etc., using the aggregate (Lagrange-interpolated) uncertainties.
+
+### 9.6 Quantities without self-feedback
+
+Rows 4–6 ($t$, $x$, $y$) have zero diagonal Jacobian elements—these
+variables do not appear in their own RHS.  In the full-covariance mode,
+their uncertainties receive contributions through the off-diagonal elements
+of $C = F\,F^\top$, which correctly capture the correlations (e.g., between
+velocity uncertainty and position uncertainty).  In diagonal mode, the
+approximate forcing terms are:
+
+- $d\sigma_t/d\xi = e^\xi\, \sigma_H / H^2$.
+- $d\sigma_x/d\xi \approx \sigma_{V_x}\, dt/d\xi + |V_x|\,\sigma_t'$.
+- $d\sigma_y/d\xi$ analogous.
+- $d\sigma_\varpi/d\xi = \sigma_Q$.
