@@ -1,0 +1,195 @@
+\documentclass[border=0mm,10pt]{standalone}
+
+\usepackage{scalerel}
+
+\usepackage{tikz}
+\usepackage{pgfplots}
+\usepackage{bm}
+\usepgfplotslibrary{fillbetween}
+\usetikzlibrary{patterns}
+\usetikzlibrary{arrows.meta}
+
+\pgfplotsset{compat=1.16}
+
+\usepgfplotslibrary{groupplots}
+
+\newcommand{\floq}[1]{{\scalebox{0.65}{$(#1)$}}}
+\newcommand{\ud}{\mathrm{d}}
+\newcommand{\lab}[1]{{\mathrm{#1}}}
+\newcommand{\minus}{{\scalebox {0.75}[1.0]{$-$}}}
+
+\definecolor{Mathematica1}{rgb}{0.368417, 0.506779, 0.709798}
+\definecolor{Mathematica2}{rgb}{0.880722, 0.611041, 0.142051}
+\definecolor{Mathematica3}{rgb}{0.560181, 0.691569, 0.194885}
+\definecolor{Mathematica4}{rgb}{0.922526, 0.385626, 0.209179}
+
+\definecolor{tabblue}{rgb}{0.121569, 0.466667, 0.705882}
+\definecolor{taborange}{rgb}{1.000000, 0.498039, 0.054902}
+
+
+
+\pgfplotsset{
+ every axis/.append style={
+grid=major, grid style={very thin, densely dashed},
+enlarge x limits=false,
+every major tick/.append style={line width=0.125mm, black},
+major tick length=1.1mm,
+minor tick length=0.75mm},
+every minor tick/.append style={black},
+every axis legend/.append style={font=\small},legend cell align={left}
+}
+
+\begin{document}
+	\begin{tikzpicture}
+		\pgfplotsset{
+			legend image code/.code={
+			\draw[mark repeat=2,mark phase=2, very thick]
+			plot coordinates {
+				(0cm,0cm)
+				(0.15cm,0cm)
+				(0.3cm,0cm)
+			};%
+			}
+		}
+
+        \begin{groupplot}[
+            group style={group size=1 by 2, horizontal sep=0.25cm, vertical sep=0cm},
+            width=8.8cm, height=6.5cm,
+            xmode=log,
+            xmin=5e-5, xmax=2,
+            minor x tick num=8,
+            scaled y ticks=false,
+            every tick/.append style={line width=0.15mm, black},
+            major tick length=1.1mm,
+            xticklabel style={scale=0.95},
+            yticklabel style={scale=0.95}
+        ]
+
+		%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+		% Left: H vs q at a/a_h = 0.1
+		%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+		\nextgroupplot[
+			ylabel={$H$},
+			ylabel shift={-1pt},
+			ytick pos=left, xtick pos=bottom,
+			ymin = 11.5, ymax = 23,
+			xmax = 1.15e0, xmin = 8.85e-5,
+			xticklabels = {},
+			title style={at={(0.5,0.97)}, anchor=north},
+			legend style={at={(0.678,0.98)},anchor=north west},
+		]
+
+		\addplot[name path=Hc4T, Mathematica1, thick] table[x index=0, y index=2] {figure3_Tmax_discrete_a10.dat};
+		\addlegendentry{$a/a_h = 1$}
+		\addplot[name path=Hc4uT, draw=none, forget plot] table[x index=0, y expr=\thisrowno{2}+\thisrowno{3}] {figure3_Tmax_discrete_a10.dat};
+		\addplot[name path=Hc4lT, draw=none, forget plot] table[x index=0, y expr=\thisrowno{2}-\thisrowno{3}] {figure3_Tmax_discrete_a10.dat};
+		\addplot[Mathematica1, fill opacity=0.2, forget plot] fill between[of=Hc4uT and Hc4lT];
+		
+		\addplot[name path=Hc3T, Mathematica2, thick] table[x index=0, y index=2] {figure3_Tmax_discrete_a01.dat};
+		\addlegendentry{$a/a_h = 0.1$}
+		\addplot[name path=Hc3uT, draw=none, forget plot] table[x index=0, y expr=\thisrowno{2}+\thisrowno{3}] {figure3_Tmax_discrete_a01.dat};
+		\addplot[name path=Hc3lT, draw=none, forget plot] table[x index=0, y expr=\thisrowno{2}-\thisrowno{3}] {figure3_Tmax_discrete_a01.dat};
+		\addplot[Mathematica2, fill opacity=0.2, forget plot] fill between[of=Hc3uT and Hc3lT];
+		
+		
+		\addplot[name path=Hc4, Mathematica1, thick, dashed] table[x index=0, y index=1] {bonetti_condition3_a10.dat};
+		\addplot[name path=Hc4u, draw=none, forget plot] table[x index=0, y expr=\thisrowno{1}+\thisrowno{2}] {bonetti_condition3_a10.dat};
+		\addplot[name path=Hc4l, draw=none, forget plot] table[x index=0, y expr=\thisrowno{1}-\thisrowno{2}] {bonetti_condition3_a10.dat};
+		\addplot[Mathematica1, fill opacity=0.2, forget plot] fill between[of=Hc4u and Hc4l];
+		
+		
+		% Our code with Bonetti's 3rd condition -- solid line with shading
+		\addplot[name path=Hc3, Mathematica2, thick, dashed] table[x index=0, y index=1] {bonetti_condition3_a01.dat};
+		\addplot[name path=Hc3u, draw=none, forget plot] table[x index=0, y expr=\thisrowno{1}+\thisrowno{2}] {bonetti_condition3_a01.dat};
+		\addplot[name path=Hc3l, draw=none, forget plot] table[x index=0, y expr=\thisrowno{1}-\thisrowno{2}] {bonetti_condition3_a01.dat};
+		\addplot[Mathematica2, fill opacity=0.2, forget plot] fill between[of=Hc3u and Hc3l];
+		
+
+	
+		% Bonetti digitized data points
+		% Bonetti digitized data points
+% Bonetti digitized data points (H)
+        \addplot[
+            only marks,
+            mark=x,
+            mark size=2.3pt,
+            mark options={solid, draw=tabblue, line width=0.9pt},
+            tabblue,
+            forget plot
+        ]
+        table[x index=0, y index=1] {bonetti_digitized_a10.dat};
+        
+        \addplot[
+            only marks,
+            mark=*,
+            mark size=1.8pt,
+            mark options={solid, draw=taborange, fill=taborange},
+            taborange,
+            forget plot
+        ]
+        table[x index=0, y index=1] {bonetti_digitized_a01.dat};
+		%\addlegendentry{B20}
+
+		%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+		% Right: K vs q at a/a_h = 0.1
+		%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+		\nextgroupplot[
+			ylabel={$K$},
+			xlabel={$q$},
+			ylabel shift={-1pt},
+			ytick pos=left, xtick pos=bottom,
+			ymin = -0.8, ymax = 2.85,
+			xmax = 1.15e0, xmin = 8.85e-5,
+			%ytick={-0.5, 0, 0.5},
+			%yticklabels={$\minus 0.5$, $0$, $0.5$},
+			title style={at={(0.5,0.97)}, anchor=north},
+		]
+		
+		\addplot[name path=Kc4, Mathematica1, thick, dashed] table[x index=0, y index=3] {bonetti_condition3_a10.dat};
+		\addplot[name path=Kc4u, draw=none, forget plot] table[x index=0, y expr=\thisrowno{3}+\thisrowno{4}] {bonetti_condition3_a10.dat};
+		\addplot[name path=Kc4l, draw=none, forget plot] table[x index=0, y expr=\thisrowno{3}-\thisrowno{4}] {bonetti_condition3_a10.dat};
+		\addplot[Mathematica1, fill opacity=0.2, forget plot] fill between[of=Kc4u and Kc4l];
+
+		% Our code with Bonetti's 3rd condition
+		\addplot[name path=Kc3, Mathematica2, thick, dashed] table[x index=0, y index=3] {bonetti_condition3_a01.dat};
+		\addplot[name path=Kc3u, draw=none, forget plot] table[x index=0, y expr=\thisrowno{3}+\thisrowno{4}] {bonetti_condition3_a01.dat};
+		\addplot[name path=Kc3l, draw=none, forget plot] table[x index=0, y expr=\thisrowno{3}-\thisrowno{4}] {bonetti_condition3_a01.dat};
+		\addplot[Mathematica2, fill opacity=0.2, forget plot] fill between[of=Kc3u and Kc3l];
+		
+		\addplot[name path=Kc4T, Mathematica1, thick] table[x index=0, y index=4] {figure3_Tmax_discrete_a10.dat};
+		\addplot[name path=Kc4uT, draw=none, forget plot] table[x index=0, y expr=\thisrowno{4}+\thisrowno{5}] {figure3_Tmax_discrete_a10.dat};
+		\addplot[name path=Kc4lT, draw=none, forget plot] table[x index=0, y expr=\thisrowno{4}-\thisrowno{5}] {figure3_Tmax_discrete_a10.dat};
+		\addplot[Mathematica1, fill opacity=0.2, forget plot] fill between[of=Kc4uT and Kc4lT];
+		
+		\addplot[name path=Kc3T, Mathematica2, thick] table[x index=0, y index=4] {figure3_Tmax_discrete_a01.dat};
+		\addplot[name path=Kc3uT, draw=none, forget plot] table[x index=0, y expr=\thisrowno{4}+\thisrowno{5}] {figure3_Tmax_discrete_a01.dat};
+		\addplot[name path=Kc3lT, draw=none, forget plot] table[x index=0, y expr=\thisrowno{4}-\thisrowno{5}] {figure3_Tmax_discrete_a01.dat};
+		\addplot[Mathematica2, fill opacity=0.2, forget plot] fill between[of=Kc3uT and Kc3lT];
+		
+
+		% Bonetti digitized data points
+        \addplot[
+            only marks,
+            mark=x,
+            mark size=2.3pt,
+            mark options={solid, draw=tabblue, line width=0.9pt},
+            tabblue,
+            forget plot
+        ]
+		table[x index=0, y index=2] {bonetti_digitized_a10.dat};
+        \addplot[
+            only marks,
+            mark=*,
+            mark size=1.8pt,
+            mark options={solid, draw=taborange, fill=taborange},
+            taborange,
+            forget plot
+        ]
+		table[x index=0, y index=2] {bonetti_digitized_a01.dat};
+
+		% Zero line
+		\draw[black, dashed] (axis cs:5e-5,0) -- (axis cs:3,0);
+
+		\end{groupplot}
+	\end{tikzpicture}
+\end{document}

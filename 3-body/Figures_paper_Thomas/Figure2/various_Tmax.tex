@@ -1,0 +1,218 @@
+\documentclass[border=0mm,10pt]{standalone}
+
+\usepackage{scalerel}
+
+\usepackage{tikz}
+\usepackage{pgfplots}
+\usepackage{bm}
+\usepgfplotslibrary{fillbetween}
+\usetikzlibrary{patterns}
+\usetikzlibrary{arrows.meta}
+
+\pgfplotsset{compat=1.16}
+
+\usepgfplotslibrary{groupplots}
+
+\newcommand{\floq}[1]{{\scalebox{0.65}{$(#1)$}}}
+\newcommand{\ud}{\mathrm{d}}
+\newcommand{\lab}[1]{{\mathrm{#1}}}
+\newcommand{\minus}{{\scalebox {0.75}[1.0]{$-$}}}
+
+\definecolor{Mathematica1}{rgb}{0.368417, 0.506779, 0.709798}
+\definecolor{Mathematica2}{rgb}{0.880722, 0.611041, 0.142051}
+\definecolor{Mathematica3}{rgb}{0.560181, 0.691569, 0.194885}
+\definecolor{Mathematica4}{rgb}{0.922526, 0.385626, 0.209179}
+\definecolor{Mathematica5}{rgb}{0.528488, 0.470624, 0.701351}
+\definecolor{Mathematica6}{rgb}{0.772079, 0.431554, 0.102387}
+\definecolor{Mathematica7}{rgb}{0.363898, 0.618501, 0.782349}
+
+
+% Extra colours for intermediate T_max lines
+\definecolor{Tmax1e3}{rgb}{0.85, 0.33, 0.10}       % dark orange
+\definecolor{Tmax1e4}{rgb}{0.80, 0.47, 0.65}        % mauve
+\definecolor{Tmax1e5}{rgb}{0.922526, 0.385626, 0.209179} % Mathematica4
+\definecolor{Tmax1e6}{rgb}{0.363898, 0.618501, 0.782349}        % Mathematica3
+\definecolor{Tmax1e7}{rgb}{0.560181, 0.691569, 0.194885}        % grey
+\definecolor{Tmax1e9}{rgb}{0.880722, 0.611041, 0.142051}       
+\definecolor{Tmax1e11}{rgb}{0.368417, 0.506779, 0.709798} % Mathematica1
+
+\pgfplotsset{
+ every axis/.append style={
+grid=major, grid style={very thin, densely dashed},
+enlarge x limits=false,
+every major tick/.append style={line width=0.125mm, black},
+major tick length=1.1mm,
+minor tick length=0.75mm},
+every minor tick/.append style={black},
+every axis legend/.append style={font=\footnotesize},legend cell align={left}
+}
+
+\begin{document}
+	\begin{tikzpicture}
+		\pgfplotsset{
+			legend image code/.code={
+			\draw[mark repeat=2,mark phase=2, very thick]
+			plot coordinates {
+				(0cm,0cm)
+				(0.15cm,0cm)
+				(0.3cm,0cm)
+			};%
+			}
+		}
+
+        \begin{groupplot}[
+            group style={group size=1 by 2, horizontal sep=0.25cm, vertical sep=0cm},
+            width=8.8cm, height=6.5cm,
+            xmode=log,
+            xmin=3e-4, xmax=2,
+            minor x tick num=8,
+            scaled y ticks=false,
+            every tick/.append style={line width=0.15mm, black},
+            major tick length=1.1mm,
+            xticklabel style={scale=0.95},
+            yticklabel style={scale=0.95},
+        ]
+
+		%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+		% Left: H vs q at a/a_h = 0.1, various T_max
+		%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+		\nextgroupplot[
+			ylabel={$H$},
+			ylabel shift={-1pt},
+			ytick pos=left, xtick pos=bottom,
+			ymin = 10.5, ymax = 26,
+			xmin = 9e-5,xmax = 1.2,
+			xticklabels = {},
+			title style={at={(0.5,0.97)}, anchor=north},
+			legend style={at={(0.655,0.97)},anchor=north west},
+		]
+
+		% T_max = 10^3 -- lightest
+		%\addplot[Tmax1e3, thick, densely dotted] table[x index=0, y index=1] {various_Tmax_1e3.dat};
+		%\addlegendentry{$T_{\rm max}=10^{3}$}
+
+		% T_max = 10^4
+		%\addplot[Tmax1e4, thick, densely dash dot] table[x index=0, y index=1] {various_Tmax_1e4.dat};
+		%\addlegendentry{$T_{\rm max}=10^{4}$}
+
+		% T_max = 10^6
+	%	\addplot[Tmax1e6, thick, dash pattern=on 4pt off 2pt on 1pt off 2pt] table[x index=0, y index=1] {various_Tmax_1e6.dat};
+	%	\addlegendentry{$T_{\rm max}=10^{6}$}
+
+		% T_max = 10^7
+	%	\addplot[Tmax1e7, thick, dash pattern=on 6pt off 2pt] table[x index=0, y index=1] {various_Tmax_1e7.dat};
+	%	\addlegendentry{$T_{\rm max}=10^{7}$}
+	
+			% T_max = 10^11 
+		\addplot[name path=Hfid, Tmax1e11, thick] table[x index=0, y index=1] {various_Tmax_1e11.dat};
+		\addplot[name path=Hfidu, draw=none, forget plot] table[x index=0, y expr=\thisrowno{1}+\thisrowno{2}] {various_Tmax_1e11.dat};
+		\addplot[name path=Hfidl, draw=none, forget plot] table[x index=0, y expr=\thisrowno{1}-\thisrowno{2}] {various_Tmax_1e11.dat};
+		\addplot[Tmax1e11, fill opacity=0.15, forget plot] fill between[of=Hfidu and Hfidl];
+
+		% T_max = 10^9
+		\addplot[Tmax1e9, thick] table[x index=0, y index=1] {various_Tmax_1e9.dat};
+		\addplot[name path=Hfidu9, draw=none, forget plot] table[x index=0, y expr=\thisrowno{1}+\thisrowno{2}] {various_Tmax_1e9.dat};
+		\addplot[name path=Hfidl9, draw=none, forget plot] table[x index=0, y expr=\thisrowno{1}-\thisrowno{2}] {various_Tmax_1e9.dat};
+		\addplot[Tmax1e9, fill opacity=0.15, forget plot] fill between[of=Hfidu9 and Hfidl9];
+		
+		% T_max = 10^7
+		\addplot[Tmax1e7, thick] table[x index=0, y index=1] {various_Tmax_1e7.dat};
+		\addplot[name path=Hfidu7, draw=none, forget plot] table[x index=0, y expr=\thisrowno{1}+\thisrowno{2}] {various_Tmax_1e7.dat};
+		\addplot[name path=Hfidl7, draw=none, forget plot] table[x index=0, y expr=\thisrowno{1}-\thisrowno{2}] {various_Tmax_1e7.dat};
+		\addplot[Tmax1e7, fill opacity=0.15, forget plot] fill between[of=Hfidu7 and Hfidl7];
+
+		% T_max = 10^7
+		%\addplot[Tmax1e6, thick] table[x index=0, y index=1] {various_Tmax_1e6.dat};
+		%\addlegendentry{$T_{\rm max}=10^{6}$}
+		%\addplot[name path=Hfidu6, draw=none, forget plot] table[x index=0, y expr=\thisrowno{1}+\thisrowno{2}] {various_Tmax_1e6.dat};
+		%\addplot[name path=Hfidl6, draw=none, forget plot] table[x index=0, y expr=\thisrowno{1}-\thisrowno{2}] {various_Tmax_1e6.dat};
+		%\addplot[Tmax1e6, fill opacity=0.15, forget plot] fill between[of=Hfidu6 and Hfidl6];
+		
+		% T_max = 10^5
+		\addplot[Tmax1e5, thick] table[x index=0, y index=1] {various_Tmax_1e5.dat};
+		\addplot[name path=Hfidu5, draw=none, forget plot] table[x index=0, y expr=\thisrowno{1}+\thisrowno{2}] {various_Tmax_1e5.dat};
+		\addplot[name path=Hfidl5, draw=none, forget plot] table[x index=0, y expr=\thisrowno{1}-\thisrowno{2}] {various_Tmax_1e5.dat};
+		\addplot[Tmax1e5, fill opacity=0.15, forget plot] fill between[of=Hfidu5 and Hfidl5];
+
+		% Bonetti digitized data points
+		\addplot[only marks, mark=o, mark size=1.5pt, Mathematica5, thick, forget plot, opacity = 0.8]
+			table[x index=0, y index=1] {bonetti_digitized_a01.dat};
+
+		%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+		% Right: K vs q at a/a_h = 0.1, various T_max
+		%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+		\nextgroupplot[
+			ylabel={$K$},
+			ylabel shift={-1pt},
+			ytick pos=left, xtick pos=bottom,
+			xmin = 9e-5,xmax = 1.2,
+			ymin = -1, ymax = 3.0,
+			xlabel={$q$},
+			%ytick={-0.5, 0, 0.5, 1.0, 1.5},
+			%yticklabels={$\minus 0.5$, $0$, $0.5$, $1.0$, $1.5$},
+			title style={at={(0.5,0.97)}, anchor=north},
+			legend style={at={(0.655,0.97)},anchor=north west},
+		]
+
+		% T_max = 10^3
+		%\addplot[Tmax1e3, thick, densely dotted] table[x index=0, y index=3] {various_Tmax_1e3.dat};
+
+		% T_max = 10^4
+		%\addplot[Tmax1e4, thick, densely dash dot] table[x index=0, y index=3] {various_Tmax_1e4.dat};
+
+		% T_max = 1.3e5
+		%\addplot[Tmax1e5, thick, dashed] table[x index=0, y index=3] {various_Tmax_1.3e5.dat};
+
+		% T_max = 10^6
+		%\addplot[Tmax1e6, thick, dash pattern=on 4pt off 2pt on 1pt off 2pt] table[x index=0, y index=3] {various_Tmax_1e6.dat};
+
+		% T_max = 10^7
+		%\addplot[Tmax1e7, thick, dash pattern=on 6pt off 2pt] table[x index=0, y index=3] {various_Tmax_1e7.dat};
+		
+		% T_max = 10^11 
+		\addplot[name path=Kfid, Tmax1e11, thick] table[x index=0, y index=3] {various_Tmax_1e11.dat};
+		\addplot[name path=Kfidu, draw=none, forget plot] table[x index=0, y expr=\thisrowno{3}+\thisrowno{4}] {various_Tmax_1e11.dat};
+		\addplot[name path=Kfidl, draw=none, forget plot] table[x index=0, y expr=\thisrowno{3}-\thisrowno{4}] {various_Tmax_1e11.dat};
+		\addplot[Tmax1e11, fill opacity=0.15, forget plot] fill between[of=Kfidu and Kfidl];
+		\addlegendentry{$T_{\rm max}=10^{11}$}
+
+
+		% T_max = 10^9
+		\addplot[Tmax1e9, thick] table[x index=0, y index=3] {various_Tmax_1e9.dat};
+		\addplot[name path=Kfidu9, draw=none, forget plot] table[x index=0, y expr=\thisrowno{3}+\thisrowno{4}] {various_Tmax_1e9.dat};
+		\addplot[name path=Kfidl9, draw=none, forget plot] table[x index=0, y expr=\thisrowno{3}-\thisrowno{4}] {various_Tmax_1e9.dat};
+		\addplot[Tmax1e9, fill opacity=0.15, forget plot] fill between[of=Kfidu9 and Kfidl9];
+		\addlegendentry{$T_{\rm max}=10^{9}$}
+
+		% T_max = 10^7
+		\addplot[Tmax1e7, thick] table[x index=0, y index=3] {various_Tmax_1e7.dat};
+		\addplot[name path=Kfidu7, draw=none, forget plot] table[x index=0, y expr=\thisrowno{3}+\thisrowno{4}] {various_Tmax_1e7.dat};
+		\addplot[name path=Kfidl7, draw=none, forget plot] table[x index=0, y expr=\thisrowno{3}-\thisrowno{4}] {various_Tmax_1e7.dat};
+		\addplot[Tmax1e7, fill opacity=0.15, forget plot] fill between[of=Kfidu7 and Kfidl7];
+		\addlegendentry{$T_{\rm max}=10^{7}$}
+
+		% T_max = 10^7
+		%\addplot[Tmax1e6, thick] table[x index=0, y index=3] {various_Tmax_1e6.dat};
+		%\addplot[name path=Kfidu6, draw=none, forget plot] table[x index=0, y expr=\thisrowno{3}+\thisrowno{4}] {various_Tmax_1e6.dat};
+		%\addplot[name path=Kfidl6, draw=none, forget plot] table[x index=0, y expr=\thisrowno{3}-\thisrowno{4}] {various_Tmax_1e6.dat};
+	%	\addplot[Tmax1e6, fill opacity=0.15, forget plot] fill between[of=Kfidu6 and Kfidl6];
+		
+		% T_max = 10^5
+		\addplot[Tmax1e5, thick] table[x index=0, y index=3] {various_Tmax_1e5.dat};
+		\addplot[name path=Kfidu5, draw=none, forget plot] table[x index=0, y expr=\thisrowno{3}+\thisrowno{4}] {various_Tmax_1e5.dat};
+		\addplot[name path=Kfidl5, draw=none, forget plot] table[x index=0, y expr=\thisrowno{3}-\thisrowno{4}] {various_Tmax_1e5.dat};
+		\addplot[Tmax1e5, fill opacity=0.15, forget plot] fill between[of=Kfidu5 and Kfidl5];
+		\addlegendentry{$T_{\rm max}=10^{5}$}
+
+
+
+		% Bonetti digitized data points
+		\addplot[only marks, mark=o, mark size=1.5pt, Mathematica5, thick, forget plot, opacity = 0.8]
+			table[x index=0, y index=2] {bonetti_digitized_a01.dat};
+
+		% Zero line
+		\draw[black, thick, densely dotted] (axis cs:1e-4,0) -- (axis cs:1.2,0);
+
+		\end{groupplot}
+	\end{tikzpicture}
+\end{document}
