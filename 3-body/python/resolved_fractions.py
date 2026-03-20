@@ -1,21 +1,26 @@
 """
-Compute the resolved fraction of scattering experiments for various (q, e) pairs.
+Plot resolved scattering fractions for a fixed eccentricity (e=0.6 by default).
 
 For each data file the last column is N_resolved (out of N = 10000 trials per
-velocity bin).  We report:
+velocity bin). We report:
   - mean  : average of N_resolved / N over all velocity bins
   - worst : minimum of N_resolved / N over all velocity bins
 
-Three datasets are processed:
-  1. results-precession-soft  (T_max = 1e11)
-  2. results_bonetti_Tcut     (T_cut set by Bonetti prescription)
-  3. results-Tmax             (various T_cut values per (q, e) pair)
+Compared datasets (all plotted vs mass ratio q):
+  1. `results_bonetti_Tcut`       : Bonetti Tmax prescription ("Hubble-time")
+  2. `results_Bonetti_Tcut1e11` : Bonetti Tmax fixed to 1e11
+  3. `results-Tmax`              : various Tmax values (dashed curves)
 """
 
 import numpy as np
 import os
 import glob
 import re
+import argparse
+
+import matplotlib
+matplotlib.use("Agg")  # allow saving in headless environments
+import matplotlib.pyplot as plt
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -70,6 +75,16 @@ def fmt_pct(value):
         return f"{value:.1f}%"
 
 
+def q_filename_str(q: float) -> str:
+    """Filename-safe formatting matching how q appears in stored results."""
+    return f"{q:g}"
+
+
+def e_filename_str(e: float) -> str:
+    """Filename-safe formatting matching how e appears in stored results."""
+    return f"{e:g}"
+
+
 def print_table(label, pairs, path_func):
     """Print a formatted table for a set of (q, e) pairs."""
     print(f"\n{'='*60}")
@@ -94,79 +109,243 @@ def print_table(label, pairs, path_func):
 # Main
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-
-    # 1. results-precession-soft
-    def precession_soft_path(q, e):
-        return os.path.join(
-            DATA_DIR, 'results-precession-soft',
-            f'q={q}_e={e}_Tcut=100000000000.txt'
-        )
-
-    print_table(
-        "results-precession-soft  (T_max = 1e11)",
-        precession_soft_pairs,
-        precession_soft_path,
+    parser = argparse.ArgumentParser(
+        description="Resolved fraction plots vs q for fixed e"
     )
+    parser.add_argument("--e", type=float, default=0.6, help="Eccentricity (default: 0.6)")
+    parser.add_argument(
+        "--save-dir",
+        default=None,
+        help="Directory to write plots (default: 3-body/python/plots)",
+    )
+    parser.add_argument("--no-save", action="store_true", help="Do not save PNGs")
+    args = parser.parse_args()
 
-    # 2. Combined: results-Tmax + results_bonetti_Tcut
-    #    For each Bonetti (q, e) pair, show rows for various Tmax values
-    #    plus a final "Bonetti" row with the Bonetti-prescribed T_cut.
-    tmax_dir = os.path.join(DATA_DIR, 'results-Tmax')
-    bonetti_dir = os.path.join(DATA_DIR, 'results_bonetti_Tcut')
+    e_fixed = args.e
 
-    tcut_display = [1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11]
+    # We only need q values for the chosen e; current data are all at e=0.6
+    q_values = sorted(set([q for q, e in bonetti_pairs if e == e_fixed]))
+    if not q_values:
+        raise RuntimeError(f"No (q, e={e_fixed}) pairs found in this script's config.")
 
-    print(f"\n{'='*60}")
-    print(f"  Resolved fractions vs T_cut  (results-Tmax + Bonetti)")
-    print(f"{'='*60}")
+    tmax_dir = os.path.join(DATA_DIR, "results-Tmax")
+    bonetti_dir_hubble = os.path.join(DATA_DIR, "results_bonetti_Tcut")
+    bonetti_dir_1e11 = os.path.join(DATA_DIR, "results_Bonetti_Tcut1e11")
 
-    for q, e in bonetti_pairs:
-        # --- Gather results-Tmax files for this (q, e) ---
-        pattern = os.path.join(tmax_dir, f'q={q}_e={e}_Tcut=*.txt')
+    # Dashed Tmax values from results-Tmax.
+    # Include 1e11 so we can directly compare against the solid Bonetti fixed line.
+    tcut_targets = [1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11]
+
+    # Storage arrays (percentages)
+    mean_bonetti_hubble = np.full(len(q_values), np.nan)
+    worst_bonetti_hubble = np.full(len(q_values), np.nan)
+    mean_bonetti_1e11 = np.full(len(q_values), np.nan)
+    worst_bonetti_1e11 = np.full(len(q_values), np.nan)
+
+    mean_dashed = {t: np.full(len(q_values), np.nan) for t in tcut_targets}
+    worst_dashed = {t: np.full(len(q_values), np.nan) for t in tcut_targets}
+
+    # Create output directory
+    save_dir = args.save_dir
+    if save_dir is None:
+        save_dir = os.path.join(os.path.dirname(__file__), "plots")
+    os.makedirs(save_dir, exist_ok=True)
+
+    # -------------------------
+    # Load Bonetti solid curves
+    # -------------------------
+    for i, q in enumerate(q_values):
+        q_str = q_filename_str(q)
+        e_str = e_filename_str(e_fixed)
+
+        # results_bonetti_Tcut: pick the only matching Tcut file
+        hubble_pattern = os.path.join(
+            bonetti_dir_hubble, f"q={q_str}_e={e_str}_Tcut=*.txt"
+        )
+        hubble_files = sorted(glob.glob(hubble_pattern))
+        if not hubble_files:
+            print(f"[WARN] Missing Bonetti hubble file for q={q_str}, e={e_str}")
+        else:
+            if len(hubble_files) > 1:
+                print(
+                    f"[WARN] Multiple Bonetti hubble matches for q={q_str}, e={e_str}; "
+                    f"using first: {os.path.basename(hubble_files[0])}"
+                )
+            mean_bonetti_hubble[i], worst_bonetti_hubble[i] = resolved_stats(
+                load_nresolved(hubble_files[0])
+            )
+
+        # results_Bonetti_Tcut1e11: fixed Tcut filename
+        bonetti_1e11_fpath = os.path.join(
+            bonetti_dir_1e11,
+            f"q={q_str}_e={e_str}_Tcut=100000000000.txt",
+        )
+        if not os.path.isfile(bonetti_1e11_fpath):
+            print(
+                f"[WARN] Missing Bonetti 1e11 file for q={q_str}, e={e_str}: "
+                f"{bonetti_1e11_fpath}"
+            )
+        else:
+            mean_bonetti_1e11[i], worst_bonetti_1e11[i] = resolved_stats(
+                load_nresolved(bonetti_1e11_fpath)
+            )
+
+    # -------------------------
+    # Load dashed results-Tmax curves
+    # -------------------------
+    tcut_regex = re.compile(r"Tcut=([0-9.eE\+\-]+)\.txt$")
+    for i, q in enumerate(q_values):
+        q_str = q_filename_str(q)
+        e_str = e_filename_str(e_fixed)
+
+        pattern = os.path.join(tmax_dir, f"q={q_str}_e={e_str}_Tcut=*.txt")
         files = glob.glob(pattern)
+        if not files:
+            print(f"[WARN] Missing results-Tmax files for q={q_str}, e={e_str}")
+            continue
 
         tcut_data = []
-        for f in files:
-            m = re.search(r'Tcut=([0-9.e+]+)\.txt', os.path.basename(f))
+        for fpath in files:
+            m = tcut_regex.search(os.path.basename(fpath))
             if m:
-                tcut_data.append((float(m.group(1)), f))
+                tcut_data.append((float(m.group(1)), fpath))
         tcut_data.sort()
 
-        # --- Header ---
-        print(f"\n  q={q:<8g}  e={e}")
-        print(f"  {'T_cut':>14s}  {'mean':>8s}  {'worst':>8s}")
-        print(f"  {'-'*14}  {'-'*8}  {'-'*8}")
+        if not tcut_data:
+            print(f"[WARN] No parseable results-Tmax Tcut values for q={q_str}, e={e_str}")
+            continue
 
-        # --- Tmax rows ---
-        if tcut_data:
-            available_tcuts = np.array([t for t, _ in tcut_data])
-            for tcut_target in tcut_display:
-                idx = np.argmin(np.abs(np.log10(available_tcuts)
-                                       - np.log10(tcut_target)))
-                tcut_actual, fpath = tcut_data[idx]
-                if abs(np.log10(tcut_actual) - np.log10(tcut_target)) > np.log10(2):
-                    continue
-                nresolved = load_nresolved(fpath)
-                mean_pct, worst_pct = resolved_stats(nresolved)
-                print(f"  {tcut_actual:>14.3g}  {fmt_pct(mean_pct):>8s}"
-                      f"  {fmt_pct(worst_pct):>8s}")
+        available_tcuts = np.array([t for t, _ in tcut_data], dtype=float)
+        tcut_to_file = {t: fpath for t, fpath in tcut_data}
+
+        for t_target in tcut_targets:
+            idx = np.argmin(np.abs(np.log10(available_tcuts) - np.log10(t_target)))
+            t_actual = float(available_tcuts[idx])
+            if abs(np.log10(t_actual) - np.log10(t_target)) > np.log10(2.0):
+                continue
+
+            fpath = tcut_to_file.get(t_actual)
+            if fpath is None:
+                continue
+
+            mean_dashed[t_target][i], worst_dashed[t_target][i] = resolved_stats(
+                load_nresolved(fpath)
+            )
+
+    # -------------------------
+    # Plotting
+    # -------------------------
+    def plot_panel(
+        y_bonetti_hubble,
+        y_bonetti_1e11,
+        y_dashed_map,
+        ylabel,
+        title,
+        yscale=None,
+        ylim=None,
+    ):
+        fig, ax = plt.subplots(figsize=(9, 5.8))
+
+        ax.plot(q_values, y_bonetti_hubble, "-", lw=2.2, label="Bonetti: Hubble-time Tmax")
+        ax.plot(q_values, y_bonetti_1e11, "-", lw=2.2, label="Bonetti: Tmax = 1e11")
+
+        for t_target in tcut_targets:
+            ax.plot(
+                q_values,
+                y_dashed_map[t_target],
+                "--",
+                lw=1.5,
+                label=f"results-Tmax: Tmax ~ {t_target:g}",
+            )
+
+        ax.set_xscale("log")
+        ax.set_xlabel(r"mass ratio $q$")
+        ax.set_ylabel(ylabel)
+        ax.set_title(title)
+        ax.grid(True, which="both", alpha=0.25)
+        if yscale is not None:
+            ax.set_yscale(yscale)
+        if ylim is not None:
+            ax.set_ylim(*ylim)
         else:
-            print(f"  {'(no Tmax data)':>14s}")
+            # Default for resolved-fractions-like quantities.
+            if yscale is None:
+                ax.set_ylim(0, 100)
+        ax.legend(fontsize=8, ncol=2)
+        fig.tight_layout()
+        return fig
 
-        # --- Bonetti row ---
-        bonetti_fpath = os.path.join(bonetti_dir, f'q={q}_e={e}.txt')
-        if os.path.isfile(bonetti_fpath):
-            # Read the Bonetti T_cut from the header
-            with open(bonetti_fpath) as fh:
-                header_line = fh.readline()
-            m = re.search(r'T_cut\s*=\s*([0-9.e+]+)', header_line)
-            bonetti_tcut = float(m.group(1)) if m else None
+    fig_mean = plot_panel(
+        mean_bonetti_hubble,
+        mean_bonetti_1e11,
+        mean_dashed,
+        ylabel="resolved fraction [%]",
+        title=f"Resolved fraction (mean) at e={e_fixed:g}",
+    )
+    fig_worst = plot_panel(
+        worst_bonetti_hubble,
+        worst_bonetti_1e11,
+        worst_dashed,
+        ylabel="resolved fraction [%]",
+        title=f"Resolved fraction (worst) at e={e_fixed:g}",
+    )
 
-            nresolved = load_nresolved(bonetti_fpath)
-            mean_pct, worst_pct = resolved_stats(nresolved)
+    # Better visualization when resolved is close to 100%:
+    # plot the complement (unresolved fraction = 100 - resolved) on a log scale.
+    mean_unres_hubble = 100.0 - mean_bonetti_hubble
+    mean_unres_1e11 = 100.0 - mean_bonetti_1e11
+    mean_unres_dashed = {t: 100.0 - arr for t, arr in mean_dashed.items()}
 
-            label = f"Bonetti ({bonetti_tcut:.2g})" if bonetti_tcut else "Bonetti"
-            print(f"  {label:>14s}  {fmt_pct(mean_pct):>8s}"
-                  f"  {fmt_pct(worst_pct):>8s}")
+    worst_unres_hubble = 100.0 - worst_bonetti_hubble
+    worst_unres_1e11 = 100.0 - worst_bonetti_1e11
+    worst_unres_dashed = {t: 100.0 - arr for t, arr in worst_dashed.items()}
 
-    print()
+    # Choose sensible y-limits for log scale (avoid non-positive values).
+    def auto_log_ylim(*arrays):
+        vals = np.concatenate([a[np.isfinite(a)] for a in arrays])
+        vals = vals[vals > 0]
+        if vals.size == 0:
+            return (0.1, 100.0)
+        ymin = float(vals.min())
+        ymax = float(vals.max())
+        return (ymin / 2.0, ymax * 1.2)
+
+    mean_unres_ylim = auto_log_ylim(mean_unres_hubble, mean_unres_1e11, *mean_unres_dashed.values())
+    worst_unres_ylim = auto_log_ylim(worst_unres_hubble, worst_unres_1e11, *worst_unres_dashed.values())
+
+    fig_mean_unres = plot_panel(
+        mean_unres_hubble,
+        mean_unres_1e11,
+        mean_unres_dashed,
+        ylabel="unresolved fraction [%] = 100 - resolved",
+        title=f"Unresolved fraction (mean) at e={e_fixed:g}",
+        yscale="log",
+        ylim=mean_unres_ylim,
+    )
+    fig_worst_unres = plot_panel(
+        worst_unres_hubble,
+        worst_unres_1e11,
+        worst_unres_dashed,
+        ylabel="unresolved fraction [%] = 100 - resolved",
+        title=f"Unresolved fraction (worst) at e={e_fixed:g}",
+        yscale="log",
+        ylim=worst_unres_ylim,
+    )
+
+    if not args.no_save:
+        e_tag = f"e{e_fixed:g}".replace(".", "p")
+        mean_path = os.path.join(save_dir, f"resolved_fractions_{e_tag}_mean.png")
+        worst_path = os.path.join(save_dir, f"resolved_fractions_{e_tag}_worst.png")
+        fig_mean.savefig(mean_path, bbox_inches="tight", dpi=200)
+        fig_worst.savefig(worst_path, bbox_inches="tight", dpi=200)
+        print(f"Saved: {mean_path}")
+        print(f"Saved: {worst_path}")
+
+        mean_unres_path = os.path.join(save_dir, f"unresolved_fractions_{e_tag}_mean.png")
+        worst_unres_path = os.path.join(save_dir, f"unresolved_fractions_{e_tag}_worst.png")
+        fig_mean_unres.savefig(mean_unres_path, bbox_inches="tight", dpi=200)
+        fig_worst_unres.savefig(worst_unres_path, bbox_inches="tight", dpi=200)
+        print(f"Saved: {mean_unres_path}")
+        print(f"Saved: {worst_unres_path}")
+
+    plt.close("all")
