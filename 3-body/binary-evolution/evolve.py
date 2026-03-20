@@ -1029,6 +1029,9 @@ if __name__ == '__main__':
     parser.add_argument('--diagonal', action='store_true',
                         help='Use diagonal uncertainty propagation instead '
                              'of the full covariance matrix (default)')
+    parser.add_argument('--output', type=str, default=None,
+                        help='Output file basename (writes <base>_full.dat '
+                             'and <base>_V0.dat).  Omit for no file output.')
     args = parser.parse_args()
 
     if args.a0 is not None and args.xi_start is not None:
@@ -1110,6 +1113,39 @@ if __name__ == '__main__':
     a_ah0 = np.exp(-xi0)
 
     print(f"V=0 reference — {len(xi0)} steps, {_status(sol0)}")
+
+    # ── Data output ────────────────────────────────────────────────────────
+    if args.output is not None:
+        fn_full = f"{args.output}_full.dat"
+        fn_v0   = f"{args.output}_V0.dat"
+
+        with open(fn_full, 'w') as f:
+            f.write(f"# evolve: q={args.q} e0={args.e0} Vx0={args.Vx0} "
+                    f"Vy0={args.Vy0} varpi0={args.varpi0} "
+                    f"xi=[{xi_span[0]},{xi_span[1]}] "
+                    f"chandrasekhar={args.chandrasekhar}\n")
+            f.write("xi a_over_ah e sig_e Vx sig_Vx Vy sig_Vy "
+                    "varpi sig_varpi t sig_t x sig_x y sig_y\n")
+            for k in range(len(xi)):
+                f.write(f"{xi[k]:.15e} {a_ah[k]:.15e} "
+                        f"{e[k]:.15e} {sig_e[k]:.15e} "
+                        f"{Vx[k]:.15e} {sig_Vx[k]:.15e} "
+                        f"{Vy[k]:.15e} {sig_Vy[k]:.15e} "
+                        f"{varpi[k]:.15e} {sig_varpi[k]:.15e} "
+                        f"{t[k]:.15e} {sig_t[k]:.15e} "
+                        f"{x_pos[k]:.15e} {sig_x[k]:.15e} "
+                        f"{y_pos[k]:.15e} {sig_y[k]:.15e}\n")
+        print(f"  Written {fn_full}  ({len(xi)} rows)")
+
+        with open(fn_v0, 'w') as f:
+            f.write(f"# evolve V=0 ref: q={args.q} e0={args.e0} "
+                    f"xi=[{xi_span[0]},{xi_span[1]}]\n")
+            f.write("xi a_over_ah e sig_e t sig_t\n")
+            for k in range(len(xi0)):
+                f.write(f"{xi0[k]:.15e} {a_ah0[k]:.15e} "
+                        f"{e0_ref[k]:.15e} {sig_e0[k]:.15e} "
+                        f"{t0_ref[k]:.15e} {sig_t0[k]:.15e}\n")
+        print(f"  Written {fn_v0}  ({len(xi0)} rows)")
 
     # ── Plots ─────────────────────────────────────────────────────────────
     try:
