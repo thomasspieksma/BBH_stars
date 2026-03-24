@@ -230,13 +230,24 @@ V_{\rm code} = \vec V / \sqrt{GM/a}$, and correspondingly $\sigma_{\rm code} =
 ### 6.3 Interpolation in eccentricity
 
 The scattering data exists on a discrete grid of $e$ values (typically $e = 0,
-0.1, 0.2, \ldots, 0.9$). As $e$ evolves, we need to interpolate. Strategy:
+0.1, 0.2, \ldots, 0.9$). As $e$ evolves, we interpolate rates to the current
+$e$.
 
 - For a given $q$, load harmonics data for all available $e$ values.
-- At each ODE evaluation, compute $H$, $K$, $P_x$, $P_y$, $Q$ at the two (or
-  more) nearest grid values of $e$, and interpolate to the current $e$.
-- Linear interpolation in $e$ should be adequate given the typical grid spacing
-  of $\Delta e = 0.1$.
+- **Production C integrator (`evolve.c`):** use a **four-point Lagrange**
+  stencil on the sorted list of **$e>0$** grid points (stencil size capped by
+  how many positive-$e$ samples exist). At each stencil point, evaluate
+  $(H, K, P_{\hat e}, P_{\hat n}, Q)$ and their 1-$\sigma$ Monte Carlo
+  uncertainties by harmonics reweighting at the current $(a/a_h,\,\vec V)$;
+  combine the central values with Lagrange weights $w_k(e)$. Combine
+  **uncertainties in quadrature** across the stencil,
+  $\sigma_R^2(e) = \sum_k w_k^2(e)\,\sigma_{R,k}^2$, separately for each rate
+  $R$, then propagate the $P_{\hat e}$, $P_{\hat n}$ errors to lab-frame
+  $P_x$, $P_y$ by the same rotation as the means. (If an $e=0$ dataset exists,
+  it is not part of this $e>0$ stencil; see `load_dataset` in `evolve.c`.)
+- **Python solver (`evolve.py`):** uses the same Lagrange–stencil logic when
+  evaluating rates on the fly; optional precomputed tables are interpolated
+  differently depending on build options.
 
 ### 6.4 Available data
 
@@ -288,21 +299,51 @@ dictionary with keys `H`, `K`, `P_x`, `P_y`, `Q`, `F`, `tau`,
 
 ## 8. Implementation notes
 
-### 8.1 ODE integration
+### 8.1 Code paths (C vs Python)
 
-Use `scipy.integrate.solve_ivp` with an adaptive-step method (e.g., RK45 or
-DOP853). The independent variable is $\xi$ and the 7 state variables are
+There are **two** integrators:
+
+- **C (`evolve.c`):** compiled binary `evolve`. Used by the plotting wrapper
+  `run_evolve.py`. Always evaluates rates **on the fly** from harmonics data
+  and always propagates uncertainties with the **full response-matrix** method
+  (Section 9.3). There is **no** `--diagonal` mode in C.
+- **Python (`evolve.py`):** uses `scipy.integrate.solve_ivp`. Supports full
+  covariance (default) and a **diagonal** shortcut (`--diagonal` /
+  `full_covariance=False`), and can use **precomputed** rate tables for speed.
+
+Default figures produced via `run_evolve.py` follow the **C** behaviour.
+
+### 8.2 ODE integration
+
+The independent variable is $\xi$ and the seven primary unknowns are
 $(e,\, \tilde V_x,\, \tilde V_y,\, \varpi,\, \tilde t,\, \tilde x,\,
-\tilde y)$.  In full-covariance mode (default), the $7 \times 5 N_{\rm files}$
-response matrix $F$ is appended (see Section 9.3).  In diagonal
-mode (`--diagonal`), 7 uncertainty variables are appended instead
+\tilde y)$.
+
+**C (`evolve.c`):** embedded **Dormand–Prince RK45** with adaptive steps
+(`rk45_solve`). The local error estimate uses only the **first seven**
+components; the appended block that stores the response matrix $F$ is advanced
+along with the state but does not enter the error norm. The extended state has
+$7 + 7 \times 5 N_e$ components, where $N_e$ is the number of **eccentricity
+samples** at the chosen $q$ that participate in the $e>0$ stencil (Section 6.3).
+If neither `--xi-start` nor `--a0` is given, $\xi_0 = 0$ ($a/a_h = 1$).
+Integration may terminate early when $e$ reaches $e_{\max,\mathrm{grid}} - 0.01$
+(event in `full_event` / `v0_event`).
+
+**Python (`evolve.py`):** `scipy.integrate.solve_ivp` (e.g. RK45 or DOP853).
+In **full covariance** mode, the same $7 \times 5 N_e$ response matrix is
+appended. In **diagonal** mode, seven scalar uncertainties are appended instead
 (14-component ODE).
 
-The $V{=}0$ reference solver (`solve_simple`) also uses the per-file
-response-matrix model, with a reduced $2\times 2$ Jacobian acting on $(e, t)$
-(see Section 9.3).
+**$V=0$ reference:** **C** integrates $(e,\tilde t)$ plus a $2 \times 5N_e$
+response block (`v0_rhs`). **Python** uses `solve_simple` with the analogous
+reduced Jacobian (Section 9.3).
 
-### 8.2 Evaluating the RHS
+**Saved uncertainties:** both paths can report **marginal** 1-$\sigma$
+standard deviations $\sigma_i = \sqrt{(FF^\top)_{ii}}$ for each primary
+component. The C writer `write_full` outputs these as `sig_*` columns; the full
+$7\times 7$ covariance is not serialized.
+
+### 8.3 Evaluating the RHS
 
 At each call to the RHS function:
 
@@ -311,37 +352,30 @@ At each call to the RHS function:
    $V_{\hat e} = V_x\cos\varpi + V_y\sin\varpi$,
    $V_{\hat n} = -V_x\sin\varpi + V_y\cos\varpi$.
 3. Express both velocity and $\sigma$ in code units.
-4. Call `reweight_from_harmonics()` (or interpolate from a precomputed table)
-   to obtain $H$, $K$, $P_{\hat e}$ (`P_x`), $P_{\hat n}$ (`P_y`), $Q$
-   (`Q`).
-5. If interpolating in $e$: evaluate at the two nearest grid $e$ values and
-   interpolate.
+4. Obtain $H$, $K$, $P_{\hat e}$, $P_{\hat n}$, $Q$ and their uncertainties:
+   **C:** `reweight` / `compute_rates` in `evolve.c` (harmonics pipeline
+   duplicated from the Python reference). **Python:** `reweight_from_harmonics()`
+   or interpolation from a precomputed table.
+5. Interpolate in $e$ as in Section 6.3 (four-point Lagrange on the $e>0$
+   grid in C; quadrature combination of rate uncertainties at stencil points).
 6. Rotate $\vec P$ to the lab frame:
    $P_x = P_{\hat e}\cos\varpi - P_{\hat n}\sin\varpi$,
    $P_y = P_{\hat e}\sin\varpi + P_{\hat n}\cos\varpi$.
 7. Compute the Chandrasekhar deceleration $\dot{\vec V}_{\rm Ch}$ (Section 5)
    and add its contribution to the velocity derivatives.
 
-### 8.3 Precomputation vs. on-the-fly evaluation
+### 8.4 Precomputation vs. on-the-fly evaluation
 
-Two strategies are possible:
+- **C (`evolve.c`):** always **on-the-fly** harmonics reweighting at each RHS
+  evaluation (numerical integration over velocity bins $N_v \sim O(10^3)$ per
+  call).
 
-- **On-the-fly**: call `reweight_from_harmonics()` at every RHS evaluation.
-  The harmonics reweighting is fast (matrix operations, no Monte Carlo), so
-  this is feasible. However, each call involves a numerical integral over $v$,
-  which takes $O(N_v)$ time with $N_v \sim 2000$ velocity bins.
+- **Python (`evolve.py`):** either the same on-the-fly
+  `reweight_from_harmonics()` or a **precomputed** lookup table on
+  $(a/a_h,\, e,\, V_{\hat e}/\sigma,\, V_{\hat n}/\sigma)$ for faster RHS
+  evaluation.
 
-- **Precomputed table**: before integration, build a lookup table of $H$, $K$,
-  $P_x$, $P_y$, $Q$ on a grid of $(a/a_h,\, e,\, V_{\hat e}/\sigma,\,
-  V_{\hat n}/\sigma)$, and use multi-dimensional interpolation during the ODE
-  integration. Faster per RHS evaluation but requires upfront investment and
-  care with grid resolution.
-
-The on-the-fly approach is simpler and recommended for an initial
-implementation. A precomputed table can be added later for performance if
-needed.
-
-### 8.4 Physical scales
+### 8.5 Physical scales
 
 All three-body data are in code units ($G = M = a = 1$). To convert to
 physical units, one specifies:
@@ -354,9 +388,23 @@ These fix $a_h = G\mu/(4\sigma^2)$ and the hardening timescale $T_{\rm hard} =
 \sigma/(G\rho\, a_h\, H)$. Alternatively, one can work entirely in
 dimensionless variables: $a/a_h$, $e$, $V/\sigma$, and $t/T_{\rm hard}$.
 
+### 8.6 Outputs and plotting (`run_evolve.py`)
+
+`run_evolve.py` runs the C binary, reads `*_full.dat` / `*_V0.dat`, and plots
+mean trajectories with shaded **marginal** bands using `sig_*`. Centre-of-mass
+ellipses use **axis-aligned** semi-axes $\sigma_x$ and $\sigma_y$. If the
+off-diagonal $x$–$y$ entry of $C = FF^\top$ is nonzero, the true
+$1$-$\sigma$ contour in the CoM plane is a **tilted** ellipse; the plot is
+then a convenient approximation unless extended to use the full $2\times 2$
+block of $C$.
+
 ---
 
 ## 9. Uncertainty propagation: variational equations
+
+A compact, paper-oriented summary (covariance definition, noise model, and
+reported marginals) is in
+[UNCERTAINTY_METHODS.md](UNCERTAINTY_METHODS.md).
 
 The evolution parameters $H$, $K$, $\vec P$, $Q$ carry 1-$\sigma$ Monte Carlo
 uncertainties $(\sigma_H,\, \sigma_K,\, \sigma_{P_x},\, \sigma_{P_y},\,
@@ -404,8 +452,7 @@ at the same rate as it damps the solution.
 For a general ODE $dy/d\xi = f(y,\xi)$, the linearised perturbation
 $\delta y$ due to parameter uncertainty satisfies
 
-$$\frac{d(\delta y)}{d\xi} = \frac{\partial f}{\partial y}\,\delta y
-+ \delta f_{\rm noise}\,,$$
+$$\frac{d(\delta y)}{d\xi} = \frac{\partial f}{\partial y}\,\delta y + \delta f_{\rm noise}\,,$$
 
 where the first term is the **Jacobian feedback** and $\delta f_{\rm noise}$
 is the forcing from rate uncertainties.  For a system of equations, $y$ is a
@@ -419,49 +466,51 @@ $$\delta y(x) = e^{-Ax} \int_0^x \sigma_A\, y(x')\, e^{Ax'}\, dx'
 
 recovering the correct result.
 
-### 9.3 Per-file response-matrix model (default)
+### 9.3 Response-matrix model (C default; Python full-covariance default)
 
-The code supports two uncertainty propagation modes, controlled by the
-`--diagonal` CLI flag (or the `full_covariance` argument to `solve()`).
+**C (`evolve.c`):** uncertainty propagation is **always** the response-matrix
+method below. **Python (`evolve.py`):** the same model is the default; an
+optional **diagonal** mode is described at the end of this subsection.
 
 #### Noise correlation structure
 
-The evolution rates are computed from Monte Carlo scattering data stored in
-per-eccentricity files.  Two properties determine the correlation structure
-of the rate uncertainties:
+Rates and their errors come from Monte Carlo scattering data at **discrete
+eccentricity samples** (one harmonics dataset per grid $e$). Index these samples
+by $k = 1,\ldots,N_e$ in the order used for the Lagrange stencil (in C, only
+**$e>0$** samples; $N_e$ matches `g_nep` in `evolve.c`). Two properties set the
+correlation structure:
 
-1. **Independent between files.**  Each eccentricity file comes from a
-   separate Monte Carlo campaign; the sampling errors in file $k$ are
-   statistically independent of those in file $j \ne k$.
+1. **Independent between samples.**  Each eccentricity sample comes from a
+   separate Monte Carlo campaign; sampling errors at $k$ are independent of
+   those at $j \ne k$.
 
-2. **Systematic within a file.**  When the same file is evaluated at
-   different velocities or semi-major axes (via reweighting of the same
-   scattering outcomes), the Monte Carlo error is a fixed but unknown
-   property of the file—not a new random draw.  The *magnitude* of the
-   uncertainty may change with the reweighting, but the underlying error
-   *realization* is the same.
+2. **Systematic within a sample.**  When the same sample is evaluated at
+   different velocities or $a/a_h$ (reweighting the same scattering outcomes),
+   the Monte Carlo error is a fixed but unknown property of that sample—not a
+   new random draw. The *magnitude* of the quoted uncertainty may change with
+   reweighting, but the underlying error *realization* is the same.
 
 #### Response-matrix equation
 
-For each file $k$ and each rate $r \in \{H, K, P_{\hat e}, P_{\hat n}, Q\}$,
-define a **response vector** $\vec f_{k,r}(\xi) \in \mathbb R^7$ satisfying
+For each eccentricity sample $k$ and each rate
+$r \in \{H, K, P_{\hat e}, P_{\hat n}, Q\}$, define a **response vector**
+$\vec f_{k,r}(\xi) \in \mathbb R^7$ satisfying
 
-$$\boxed{\frac{d\vec f_{k,r}}{d\xi}
-= J\,\vec f_{k,r}
-+ w_k\bigl(e(\xi)\bigr)\;\sigma_{R_{k,r}}\bigl(V(\xi)\bigr)\;\vec b_r\,,
+$$\boxed{\frac{d\vec f_{k,r}}{d\xi} = J\,\vec f_{k,r} + w_k\bigl(e(\xi)\bigr)\;\sigma_{R_{k,r}}\bigl(V(\xi)\bigr)\;\vec b_r\,,
 \qquad \vec f_{k,r}(0) = 0\,.}$$
 
 Here $J$ is the $7\times 7$ Jacobian (Section 9.4), $w_k(e)$ is the Lagrange
-interpolation weight for file $k$ at the current eccentricity, $\sigma_{R_{k,r}}$
-is the Monte Carlo uncertainty on rate $r$ from file $k$ at the current
-velocity, and $\vec b_r$ is column $r$ of the loading matrix $B$
-(Section 9.5).  Files outside the current Lagrange stencil have $w_k = 0$,
-so they receive no new forcing, but their accumulated response vectors still
-evolve via the Jacobian term $J\,\vec f$.
+interpolation weight for sample $k$ at the current $e$, $\sigma_{R_{k,r}}$ is
+the 1-$\sigma$ uncertainty on rate $r$ for sample $k$ at the current velocity
+(binary frame), and $\vec b_r$ is column $r$ of the loading matrix $B$
+(Section 9.5). Samples outside the current stencil have $w_k = 0$, so they
+receive no new forcing, but their accumulated response vectors still evolve via
+$J\,\vec f$.
 
 Collecting all response vectors into a $7 \times N_{\rm noise}$ matrix
-$F = [\vec f_{0,0},\, \vec f_{0,1},\, \ldots,\, \vec f_{N_{\rm files}-1,4}]$
-where $N_{\rm noise} = 5\, N_{\rm files}$, the equation becomes
+$F$ whose columns are $\vec f_{k,r}$ for global sample index
+$k = 0,\ldots,N_e-1$ and $r \in \{0,\ldots,4\}$, with
+$N_{\rm noise} = 5\, N_e$, the equation is
 
 $$\frac{dF}{d\xi} = J\, F + G\,,$$
 
@@ -471,14 +520,15 @@ The full $7\times 7$ **covariance matrix** is
 
 $$C = F\, F^\top = \sum_{k,r} \vec f_{k,r}\,\vec f_{k,r}^\top\,,$$
 
-since all noise sources are independent unit-variance normals by
-construction (the variance is absorbed into $G$).  Marginal uncertainties
-are $\sigma_Y = \sqrt{C_{YY}}$ and off-diagonal entries capture
-correlations.
+assuming independent unit-variance normals per column (variance absorbed into
+$G$). Marginal uncertainties are $\sigma_Y = \sqrt{C_{YY}}$; off-diagonal entries
+of $C$ give correlations between state components.
 
-**State vector size:** $7 + 7 \times 5 \times N_{\rm files}$.  Typical
-values: $q=1$ with 10 files gives 357 elements; $q=0.2$ with 55 files gives
-1932 elements.  All are easily tractable for `solve_ivp`.
+**State vector size:** $7 + 7 \times 5 N_e$. For example, $q=1$ with ten
+eccentricity datasets including $e=0$ yields $N_e = 9$ (only $e>0$ samples
+count toward `g_nep` in `evolve.c`), i.e. $7 + 315 = 322$ components; if no
+$e=0$ file exists, $N_e$ equals the number of datasets. The C integrator uses
+an explicit adaptive RK45; Python uses `solve_ivp`.
 
 **Early-time behaviour.**  For small $\xi$, $F \approx G\,\xi$, so
 $\sigma_Y \propto \xi$ (linear growth) and the signal-to-noise ratio
@@ -486,15 +536,15 @@ $f_Y / \sigma_{f_Y}$ is constant from the first step—matching the physical
 expectation that a force with a definite sign produces a definite
 displacement.
 
-**Stencil transitions.**  When $e$ evolves enough that a new file $j$ enters
-the Lagrange stencil, its response vectors start from zero and build up
-gradually as $w_j$ grows.  There is no artificial correlation between the new
-file's uncertainty and the uncertainty accumulated from previous files.
+**Stencil transitions.**  When $e$ evolves enough that a new sample $j$ enters
+the Lagrange stencil, its response vectors start from zero and build up as
+$w_j$ grows. There is no artificial correlation between the new sample’s
+uncertainty and uncertainty accumulated from other samples.
 
-#### $V{=}0$ reference (`solve_simple`)
+#### $V{=}0$ reference
 
-The $V{=}0$ reference solver uses the same per-file response-matrix model but
-with a reduced $2\times 2$ state $(e, t)$.  The Jacobian is
+**C:** `v0_rhs` uses the same response-matrix bookkeeping on the reduced state
+$(e, \tilde t)$. **Python:** `solve_simple` is the analogue. The Jacobian is
 
 $$J = \begin{pmatrix}
 \partial K / \partial e & 0 \\
@@ -503,12 +553,12 @@ $$J = \begin{pmatrix}
 
 and the loading is $G_{0,\,5k+1} = w_k\,\sigma_{K_k}$ (eccentricity from $K$
 noise) and $G_{1,\,5k+0} = -w_k\,\sigma_{H_k}\,e^\xi / H^2$ (time from $H$
-noise).  The $2\times 2$ covariance is $C = F\,F^\top$ as usual.
+noise). The $2\times 2$ covariance is $C = F\,F^\top$ as usual.
 
 This ensures an apples-to-apples comparison of the $V{=}0$ and full-solver
 uncertainty bands.
 
-#### Why the diagonal model overcounts at stencil transitions
+#### Why the diagonal model overcounts at stencil transitions (Python)
 
 The scalar variational equation
 $d\sigma_Y/d\xi = J_{YY}\,\sigma_Y + \sigma_{f_Y}$
@@ -519,40 +569,38 @@ every step.  This correctly treats each step's noise as systematic
 consecutive steps is *perfectly correlated*—the same systematic bias
 accumulating coherently.
 
-In reality, when the Lagrange stencil shifts (a new file enters and an old
-file exits), the aggregate at step $n$ and at step $n{+}1$ are composed of
-*partially different* files.  The new file contributes a genuinely
+In reality, when the Lagrange stencil shifts (a new sample enters and an old
+one exits), the aggregate at step $n$ and at step $n{+}1$ are composed of
+*partially different* samples.  The new sample contributes a genuinely
 independent bias that should be added in *quadrature*, not coherently.
-Consecutive 4-point stencils share 3 of 4 files, so the overcounting is
+Consecutive 4-point stencils share 3 of 4 samples, so the overcounting is
 moderate per transition but compounds over many shifts.  For a fine
-eccentricity grid (e.g., $q{=}0.2$ with 54 files and ${\sim}40{-}50$
-stencil transitions), the overcounting factor is roughly
-$\sqrt{N_{\rm transitions}} \sim 7$.
+eccentricity grid (e.g., $q{=}0.2$ with many samples and ${\sim}40{-}50$
+stencil transitions), the overcounting factor can be of order
+$\sqrt{N_{\rm transitions}}$.
 
-The per-file response-matrix model avoids this entirely: each file has its
-own response vector, accumulated continuously as the weight $w_k(e)$
-changes.  Files appearing in multiple consecutive stencils are tracked as
-a single, continuous noise source with no double-counting.
+The response-matrix model avoids this: each eccentricity sample has its own
+response vector, accumulated continuously as $w_k(e)$ changes. Samples shared
+across consecutive stencils are a single noise source with no double-counting.
 
-#### Diagonal fallback (`--diagonal`)
+#### Diagonal fallback (Python `evolve.py` only: `--diagonal`)
 
-Only the 7 diagonal uncertainties $\sigma_Y$ are tracked (14-component state
-vector: 7 state + 7 uncertainties).  Each evolves independently:
+Only the seven marginal uncertainties $\sigma_Y$ are tracked (14-component
+state: 7 dynamical + 7 uncertainties). Each obeys
 
 $$\frac{d\sigma_Y}{d\xi} = J_{YY}\,\sigma_Y + \sigma_{f_Y}\,.$$
 
-This uses aggregate lab-frame uncertainties and neglects off-diagonal
-coupling, but captures the dominant Jacobian feedback (particularly
-Chandrasekhar drag damping on velocity uncertainty).  It is cheaper (fewer
-finite-difference evaluations) and useful for quick checks, but it
-overcounts noise at stencil transitions as described above.
+This uses aggregate lab-frame uncertainties and neglects off-diagonal coupling
+in $C$, but retains diagonal Jacobian feedback (notably Chandrasekhar damping).
+It requires fewer finite-difference Jacobian columns than full covariance, but
+overcounts noise at stencil transitions as above. **Not available in C.**
 
 ### 9.4 Jacobian structure
 
 The Jacobian $J_{ij} = \partial f_i / \partial y_j$ is a $7\times 7$
-matrix.  In the full-covariance mode all columns are computed; in diagonal
-mode only the diagonal elements $J_{00}$, $J_{11}$, $J_{22}$ are used
-(with $J_{33} \approx 0$).
+matrix. **C and Python (full covariance):** all seven columns are computed.
+**Python diagonal mode only:** only $J_{00}$, $J_{11}$, $J_{22}$ are used for
+the scalar $\sigma_Y$ equations (with $J_{33} \approx 0$).
 
 **Column 0 (eccentricity derivatives)** — analytic from the Lagrange
 interpolant.  The interpolation weights
@@ -580,23 +628,23 @@ cost is essentially zero.
 
 **Columns 1–2 (velocity derivatives)** — central finite differences at
 $V_x \pm \delta$ (or $V_y \pm \delta$), capturing all five rates and the
-Chandrasekhar terms.  Each column requires 2 extra `compute_rates` calls
-plus 2 Chandrasekhar evaluations.  Rows 5–6 use the chain rule:
+Chandrasekhar terms. In **C**, $\delta = 0.01$ (in units of $\tilde V$). Each
+column needs two extra rate evaluations plus Chandrasekhar at perturbed
+velocities. Rows 5–6 use the chain rule:
 $\partial(V_x \, dt/d\xi)/\partial V_x = dt/d\xi + V_x\,\partial(dt/d\xi)/\partial V_x$.
 
 **Column 3 (precession derivatives)** — central finite differences at
-$\varpi \pm \delta_\varpi$ (2 extra `compute_rates` calls).  This captures
-the dependence of rates on $\varpi$ through the velocity projection into the
-binary frame.  In the diagonal mode this column is omitted
-($J_{33} \approx 0$).
+$\varpi \pm \delta_\varpi$ (C: $\delta_\varpi = 0.01$). This captures the
+dependence of rates on $\varpi$ through projection into the binary frame.
+**Python diagonal mode** omits this column ($J_{33} \approx 0$).
 
 **Columns 4–6** are zero: $t$, $x$, $y$ do not appear in any RHS.
 
-**Cost:** In full-covariance mode the RHS evaluates `compute_rates`
-$1 + 4 + 2 = 7$ times per step (nominal + 2 per velocity axis + 2 for
-$\varpi$).  In diagonal mode: $1 + 4 = 5$ times.
+**Cost:** Full covariance: nominal `compute_rates` plus four velocity
+perturbations plus two $\varpi$ perturbations ($7$ rate evaluations per RHS
+in C). Python diagonal mode: $1 + 4 = 5$ evaluations.
 
-### 9.5 Loading matrix and per-file noise sources
+### 9.5 Loading matrix and noise columns
 
 The $7\times 5$ **loading matrix** $B$ maps a unit perturbation in the five
 binary-frame rates $(H,\, K,\, P_{\hat e},\, P_{\hat n},\, Q)$ to the
@@ -613,35 +661,33 @@ $$B = \begin{pmatrix}
 -\tilde V_y\,e^\xi/H^2 & 0 & 0 & 0 & 0
 \end{pmatrix}$$
 
-The per-file loading matrix $G$ (7 × $N_{\rm noise}$) has mostly zero
-columns; only the files in the current Lagrange stencil contribute:
+The loading matrix $G$ (size $7 \times N_{\rm noise}$) has mostly zero columns;
+only eccentricity samples in the current Lagrange stencil contribute:
 
 $$G_{:,\,5k+r} = w_k(e)\;\sigma_{R_{k,r}}(V)\;\vec b_r$$
 
-for each stencil file $k$ and rate $r \in \{0,\ldots,4\}$, where
-$\sigma_{R_{k,r}}$ is the Monte Carlo uncertainty on rate $r$ from file $k$
-at the current velocity (in binary-frame coordinates).
+for sample index $k$ (globally ordered as in the integrator) and
+$r \in \{0,\ldots,4\}$, where $\sigma_{R_{k,r}}$ is the 1-$\sigma$ uncertainty
+on rate $r$ for that sample at the current velocity (binary frame).
 
-**Approximation:** The five rate uncertainties within each file are treated
-as independent noise sources.  In reality, $H_k$, $K_k$, $P_{{\hat e},k}$,
-$P_{{\hat n},k}$, $Q_k$ from the same scattering data are correlated; fully
-capturing this would require the $5\times 5$ within-file covariance matrix
-from `reweight_from_harmonics`, which is not currently computed.  This is a
-minor approximation compared to the systematic-vs-stochastic distinction.
+**Approximation:** The five rate uncertainties within each eccentricity sample
+are treated as **independent** noise sources. In reality $H$, $K$,
+$P_{\hat e}$, $P_{\hat n}$, $Q$ from the same data are correlated; a full
+$5\times 5$ within-sample covariance from `reweight_from_harmonics` is not
+used. This is secondary to the between-sample independence structure.
 
-In diagonal mode, the equivalent forcing terms are
+**Python diagonal mode:** aggregate forcing uses
 $\sigma_{f_e} = \sigma_K$,
 $\sigma_{f_{V_x}} = \sqrt{\sigma_{P_x}^2 + (\mathrm{Ch}_x\,\sigma_H/H)^2}$,
-etc., using the aggregate (Lagrange-interpolated) uncertainties.
+etc., with Lagrange-combined (interpolated) uncertainties.
 
 ### 9.6 Quantities without self-feedback
 
 Rows 4–6 ($t$, $x$, $y$) have zero diagonal Jacobian elements—these
-variables do not appear in their own RHS.  In the full-covariance mode,
+variables do not appear in their own RHS. In **full covariance** (C default),
 their uncertainties receive contributions through the off-diagonal elements
-of $C = F\,F^\top$, which correctly capture the correlations (e.g., between
-velocity uncertainty and position uncertainty).  In diagonal mode, the
-approximate forcing terms are:
+of $C = F\,F^\top$, which capture correlations (e.g., velocity vs. position).
+**Python diagonal mode** uses the approximate scalar forcings:
 
 - $d\sigma_t/d\xi = e^\xi\, \sigma_H / H^2$.
 - $d\sigma_x/d\xi \approx \sigma_{V_x}\, dt/d\xi + |V_x|\,\sigma_t'$.
