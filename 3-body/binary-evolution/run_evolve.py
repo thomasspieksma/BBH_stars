@@ -133,6 +133,9 @@ def main():
     sig_x   = full['sig_x']
     y_pos   = full['y']
     sig_y   = full['sig_y']
+    C_xx    = full.get('C_xx')
+    C_xy    = full.get('C_xy')
+    C_yy    = full.get('C_yy')
 
     xi0     = v0['xi']
     a_ah0   = v0['a_over_ah']
@@ -165,9 +168,21 @@ def main():
     ax.plot(x_pos[-1], y_pos[-1], 's', ms=5, label='end')
     n_ell = min(args.n_ellipses, len(xi))
     ell_idx = np.linspace(0, len(xi) - 1, n_ell, dtype=int)
+    has_cov = C_xx is not None and C_xy is not None and C_yy is not None
     for ii in ell_idx:
+        if has_cov:
+            cov2 = np.array([[C_xx[ii], C_xy[ii]],
+                             [C_xy[ii], C_yy[ii]]], dtype=float)
+        else:
+            cov2 = np.array([[sig_x[ii] * sig_x[ii], 0.0],
+                             [0.0, sig_y[ii] * sig_y[ii]]], dtype=float)
+        eigvals, eigvecs = np.linalg.eigh(cov2)
+        eigvals = np.maximum(eigvals, 0.0)
+        width = 2 * np.sqrt(eigvals[1])
+        height = 2 * np.sqrt(eigvals[0])
+        angle = np.degrees(np.arctan2(eigvecs[1, 1], eigvecs[0, 1]))
         ell = Ellipse((x_pos[ii], y_pos[ii]),
-                      width=2 * sig_x[ii], height=2 * sig_y[ii],
+                      width=width, height=height, angle=angle,
                       facecolor='C0', alpha=0.15, edgecolor='none')
         ax.add_patch(ell)
     ax.set(xlabel=r'$x\;/\;(\sigma\, T_{\rm hard})$',

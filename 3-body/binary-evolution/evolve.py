@@ -1118,23 +1118,33 @@ if __name__ == '__main__':
     if args.output is not None:
         fn_full = f"{args.output}_full.dat"
         fn_v0   = f"{args.output}_V0.dat"
+        has_cov = hasattr(sol, 'cov') and sol.cov is not None
 
         with open(fn_full, 'w') as f:
             f.write(f"# evolve: q={args.q} e0={args.e0} Vx0={args.Vx0} "
                     f"Vy0={args.Vy0} varpi0={args.varpi0} "
                     f"xi=[{xi_span[0]},{xi_span[1]}] "
                     f"chandrasekhar={args.chandrasekhar}\n")
-            f.write("xi a_over_ah e sig_e Vx sig_Vx Vy sig_Vy "
-                    "varpi sig_varpi t sig_t x sig_x y sig_y\n")
+            header = ("xi a_over_ah e sig_e Vx sig_Vx Vy sig_Vy "
+                      "varpi sig_varpi t sig_t x sig_x y sig_y")
+            if has_cov:
+                header += " C_xx C_xy C_yy"
+            f.write(header + "\n")
             for k in range(len(xi)):
-                f.write(f"{xi[k]:.15e} {a_ah[k]:.15e} "
-                        f"{e[k]:.15e} {sig_e[k]:.15e} "
-                        f"{Vx[k]:.15e} {sig_Vx[k]:.15e} "
-                        f"{Vy[k]:.15e} {sig_Vy[k]:.15e} "
-                        f"{varpi[k]:.15e} {sig_varpi[k]:.15e} "
-                        f"{t[k]:.15e} {sig_t[k]:.15e} "
-                        f"{x_pos[k]:.15e} {sig_x[k]:.15e} "
-                        f"{y_pos[k]:.15e} {sig_y[k]:.15e}\n")
+                row = (f"{xi[k]:.15e} {a_ah[k]:.15e} "
+                       f"{e[k]:.15e} {sig_e[k]:.15e} "
+                       f"{Vx[k]:.15e} {sig_Vx[k]:.15e} "
+                       f"{Vy[k]:.15e} {sig_Vy[k]:.15e} "
+                       f"{varpi[k]:.15e} {sig_varpi[k]:.15e} "
+                       f"{t[k]:.15e} {sig_t[k]:.15e} "
+                       f"{x_pos[k]:.15e} {sig_x[k]:.15e} "
+                       f"{y_pos[k]:.15e} {sig_y[k]:.15e}")
+                if has_cov:
+                    Cxx = sol.cov[25, k]
+                    Cxy = sol.cov[26, k]
+                    Cyy = sol.cov[27, k]
+                    row += f" {Cxx:.15e} {Cxy:.15e} {Cyy:.15e}"
+                f.write(row + "\n")
         print(f"  Written {fn_full}  ({len(xi)} rows)")
 
         with open(fn_v0, 'w') as f:

@@ -1078,6 +1078,22 @@ static void extract_sigma(const double *F, int ns, int nn, double *sig)
     }
 }
 
+static void extract_cov2(const double *F, int nn, int i0, int i1,
+                         double *c00, double *c01, double *c11)
+{
+    double s00 = 0.0, s01 = 0.0, s11 = 0.0;
+    for (int j = 0; j < nn; j++) {
+        double v0 = F[i0*nn + j];
+        double v1 = F[i1*nn + j];
+        s00 += v0 * v0;
+        s01 += v0 * v1;
+        s11 += v1 * v1;
+    }
+    *c00 = s00;
+    *c01 = s01;
+    *c11 = s11;
+}
+
 /* ══════════════════════════════════════════════════════════════════════════
  *  Data output
  * ══════════════════════════════════════════════════════════════════════════*/
@@ -1089,15 +1105,20 @@ static void write_full(const Sol *sol, const char *fn,
     if (!f) { fprintf(stderr, "Cannot write %s\n", fn); return; }
     fprintf(f, "# evolve: q=%g e0=%g Vx0=%g Vy0=%g varpi0=%g xi=[%g,%g] chandrasekhar=%s\n",
             q, e0, Vx0, Vy0, w0, xi0, xi1, chm);
-    fprintf(f, "xi a_over_ah e sig_e Vx sig_Vx Vy sig_Vy varpi sig_varpi t sig_t x sig_x y sig_y\n");
+    fprintf(f, "xi a_over_ah e sig_e Vx sig_Vx Vy sig_Vy varpi sig_varpi t sig_t x sig_x y sig_y C_xx C_xy C_yy\n");
     int nn = g_nnoise, ns_full = NS;
     double sig[NS];
     for (int k = 0; k < sol->n; k++) {
         double xi = sol->xi[k];
         const double *yy = sol->y + k * sol->ns;
+        const double *F = yy + NS;
+        double C_xx, C_xy, C_yy;
         extract_sigma(yy + NS, ns_full, nn, sig);
+        /* CoM covariance block for x (state 5) and y (state 6). */
+        extract_cov2(F, nn, 5, 6, &C_xx, &C_xy, &C_yy);
         fprintf(f, "%.15e %.15e %.15e %.15e %.15e %.15e %.15e %.15e "
-                   "%.15e %.15e %.15e %.15e %.15e %.15e %.15e %.15e\n",
+                   "%.15e %.15e %.15e %.15e %.15e %.15e %.15e %.15e "
+                   "%.15e %.15e %.15e\n",
                 xi, exp(-xi),
                 yy[0], sig[0],
                 yy[1], sig[1],
@@ -1105,7 +1126,8 @@ static void write_full(const Sol *sol, const char *fn,
                 yy[3], sig[3],
                 yy[4], sig[4],
                 yy[5], sig[5],
-                yy[6], sig[6]);
+                yy[6], sig[6],
+                C_xx, C_xy, C_yy);
     }
     fclose(f);
 }
