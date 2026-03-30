@@ -62,6 +62,7 @@ cd 3-body/C++
 | `./cluster.sh fetch [pattern] [--dest dir]` | Download results (default: `*.txt` + `*.bin` + `harmonics_*` to `./results/`) |
 | `./cluster.sh logs <job_id>` | Show stdout/stderr for a job |
 | `./cluster.sh clean` | Remove `*.out` and `*.err` on the cluster |
+| `./cluster.sh cleanresults` | Remove result files (`*.txt`, `*.bin`, `harmonics_*`) on the cluster |
 | `./cluster.sh ls [subdir]` | List remote files |
 | `./cluster.sh wait <job_id>` | Poll until a job finishes |
 
@@ -108,6 +109,7 @@ determine what arguments it expects, then pass them in the correct order.
 | "check my jobs" / "job status" | `./cluster.sh status` |
 | "get the results" / "fetch results" | `./cluster.sh fetch` |
 | "clean up the cluster" | `./cluster.sh clean` |
+| "clear results on the cluster" | `./cluster.sh cleanresults` |
 | "cancel job 12345" | `./cluster.sh cancel 12345` |
 | "cancel everything" | `./cluster.sh cancel all` |
 | "show logs for job 12345" | `./cluster.sh logs 12345` |
@@ -132,6 +134,8 @@ results"), follow this full lifecycle:
      Do NOT attempt to poll for hours — the user may close Cursor or sleep their laptop.
 4. When fetching results after a long job, always also clean up:
    `./cluster.sh fetch && ./cluster.sh clean`
+5. To free disk space on the cluster after fetching, remove result files:
+   `./cluster.sh cleanresults`
 
 ## Important notes
 

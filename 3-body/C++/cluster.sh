@@ -27,6 +27,7 @@ Commands:
   fetch    [pattern] [--dest dir]           Download results to local machine
   logs     <job_id>                         Show stdout/stderr for a job
   clean                                     Remove .out and .err files on the cluster
+  cleanresults                              Remove result files (*.txt, *.bin, harmonics_*) on the cluster
   ls       [subdir]                         List files in the remote directory
   wait     <job_id>                         Poll until a job finishes
 
@@ -227,6 +228,13 @@ cmd_clean() {
     echo ">> Clean complete."
 }
 
+# ── cleanresults ──────────────────────────────────────────────
+cmd_cleanresults() {
+    echo ">> Removing result files (*.txt, *.bin, harmonics_*) on cluster ..."
+    ssh_cmd "rm -f ${REMOTE_DIR}/*.txt ${REMOTE_DIR}/*.bin ${REMOTE_DIR}/harmonics_*"
+    echo ">> Result files removed."
+}
+
 # ── ls ────────────────────────────────────────────────────────
 cmd_ls() {
     local subdir="${1:-}"
@@ -265,6 +273,7 @@ case "$command" in
     fetch)    cmd_fetch "$@" ;;
     logs)     cmd_logs "$@" ;;
     clean)    cmd_clean "$@" ;;
+    cleanresults) cmd_cleanresults "$@" ;;
     ls)       cmd_ls "$@" ;;
     wait)     cmd_wait "$@" ;;
     help|-h|--help) usage ;;

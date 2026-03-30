@@ -136,6 +136,9 @@ def main():
     C_xx    = full.get('C_xx')
     C_xy    = full.get('C_xy')
     C_yy    = full.get('C_yy')
+    C_VxVx  = full.get('C_VxVx')
+    C_VxVy  = full.get('C_VxVy')
+    C_VyVy  = full.get('C_VyVy')
 
     xi0     = v0['xi']
     a_ah0   = v0['a_over_ah']
