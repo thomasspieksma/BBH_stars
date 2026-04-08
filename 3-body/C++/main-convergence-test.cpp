@@ -1,8 +1,9 @@
 //
-//  main.cpp
-//  3-body-scattering
+//  main-convergence-test.cpp
+//  3-body-scattering  –  convergence test variant
 //
-//  Created by Giovanni Maria Tomaselli on 31/07/25.
+//  Based on main.cpp by Giovanni Maria Tomaselli.
+//  Adds CLI selection of integrator and tolerance, and encodes them in output filenames.
 //
 
 #include <iostream>
@@ -16,6 +17,7 @@
 #include <numeric>
 #include <sstream>
 #include <algorithm>
+#include <stdexcept>
 #include <omp.h>
 #include <mutex>
 
@@ -23,6 +25,34 @@
 
 double r_sphere = 50.0;
 double eps_soft = 1e-5;
+
+// ── Integrator selection ─────────────────────────────────────
+
+enum class Integrator { RK45, Verlet, Pihajoki, Yoshida, BulirschStoer };
+
+Integrator parseIntegrator(const std::string& name) {
+    std::string s = name;
+    std::transform(s.begin(), s.end(), s.begin(), ::tolower);
+    if (s == "rk45")           return Integrator::RK45;
+    if (s == "verlet")         return Integrator::Verlet;
+    if (s == "pihajoki")       return Integrator::Pihajoki;
+    if (s == "yoshida")        return Integrator::Yoshida;
+    if (s == "bulirsch_stoer") return Integrator::BulirschStoer;
+    throw std::runtime_error("Unknown integrator: " + name);
+}
+
+std::string integratorName(Integrator ig) {
+    switch (ig) {
+        case Integrator::RK45:          return "rk45";
+        case Integrator::Verlet:        return "verlet";
+        case Integrator::Pihajoki:      return "pihajoki";
+        case Integrator::Yoshida:       return "yoshida";
+        case Integrator::BulirschStoer: return "bulirsch_stoer";
+    }
+    return "unknown";
+}
+
+// ── Physics / math utilities ─────────────────────────────────
 
 // Calculate the eccentric anomaly E as a function of the mean anomaly M_anom
 double EccentricAnomaly(double M_anom, double e, double tol = 1e-15, int max_iter = 100)
@@ -580,7 +610,7 @@ bool handleFarBoundKeplerMotion(Vec3 & r_old, Vec3 & v_old, double & t_old) // T
     return true;
 }
 
-ParticleResult evolveParticle(const BinaryOrbit& orbit, const ParticleResult init, double q, double e_bin, double Tmax, int max_steps, const std::function<Vec3(const Vec3&, double)> & forceFunc, double tol = 0.01) // Example values: tol = 0.02 for RK45, tol = 0.01 for Pihajoki, tol = 0.005 for velocity Verlet
+ParticleResult evolveParticle(const BinaryOrbit& orbit, const ParticleResult init, double q, double e_bin, double Tmax, int max_steps, const std::function<Vec3(const Vec3&, double)> & forceFunc, Integrator integrator, double tol)
 {
     Vec3 r_old = init.r, v_old = init.v;
     Vec3 r = init.r, v = init.v;
@@ -610,12 +640,13 @@ ParticleResult evolveParticle(const BinaryOrbit& orbit, const ParticleResult ini
         v = v_old;
         t = t_old;
         
-        // with adaptive time step, Verlet and Yoshida are no longer symplectic, so it's better to use RK45
-        //velocityVerletStep(r, v, t, dt, forceFunc);
-        //yoshida4Step(r, v, t, dt, forceFunc);
-        rk45Step(r, v, t, dt, forceFunc);
-        //pihajokiStep(r, v, t, dt, forceFunc);
-        //bulirschStoerStep(r, v, t, dt, forceFunc);
+        switch (integrator) {
+            case Integrator::RK45:          rk45Step(r, v, t, dt, forceFunc); break;
+            case Integrator::Verlet:        velocityVerletStep(r, v, t, dt, forceFunc); break;
+            case Integrator::Pihajoki:      pihajokiStep(r, v, t, dt, forceFunc); break;
+            case Integrator::Yoshida:       yoshida4Step(r, v, t, dt, forceFunc); break;
+            case Integrator::BulirschStoer: bulirschStoerStep(r, v, t, dt, forceFunc); break;
+        }
         
         Vec3 dv = v - v_old;
         double relChange = norm(dv) / (norm(v_old) + 1e-12); // Estimate relative change in velocity, avoid divide by 0
@@ -786,18 +817,29 @@ int main(int argc, char* argv[]) {
 
     std::cout << "OpenMP threads: " << omp_get_max_threads() << std::endl;
     
-    if (argc < 3)
+    if (argc < 5)
     {
-        std::cerr << "Usage: " << argv[0] << " q e\n";
+        std::cerr << "Usage: " << argv[0] << " q e integrator tol\n";
+        std::cerr << "  integrator: rk45, verlet, pihajoki, yoshida, bulirsch_stoer\n";
         return 1;
     }
     
-    //double q = 0.1, e = 0.6;
     double q = std::stod(argv[1]);
     double e = std::stod(argv[2]);
-    
+    Integrator integrator = parseIntegrator(argv[3]);
+    double tol = std::stod(argv[4]);
+
+    // Keep raw CLI strings for the output filename (avoids floating-point formatting issues)
+    std::string q_str   = argv[1];
+    std::string e_str   = argv[2];
+    std::string ig_str  = integratorName(integrator);
+    std::string tol_str = argv[4];
+
+    std::cout << "Parameters: q=" << q << ", e=" << e
+              << ", integrator=" << ig_str << ", tol=" << tol << std::endl;
+
     double Tmax = 1e11;
-    bool split_by_Tcut = false;  // toggle to enable/disable multi‑Tcut output
+    bool split_by_Tcut = false;  // toggle to enable/disable multi-Tcut output
 
     int max_steps = 1e9;
     int N = 1e4;
@@ -807,7 +849,7 @@ int main(int argc, char* argv[]) {
     std::vector<double> TmaxCuts;
     double Tmin_cut = 1e3;
     if (split_by_Tcut) {
-        int n_cuts = 100;   // number of log‑spaced cut values
+        int n_cuts = 100;   // number of log-spaced cut values
         double log_min = std::log10(Tmin_cut);
         double log_max = std::log10(Tmax);
         for (int i = 0; i < n_cuts; ++i) {
@@ -840,52 +882,13 @@ int main(int argc, char* argv[]) {
         for (int i = 0; i < N; ++i)
         {
             ParticleResult init = generateInitialConditions(v, rp_max);
-            ParticleResult fin  = evolveParticle(orbit, init, q, e, Tmax, max_steps, forceFunc);
+            ParticleResult fin  = evolveParticle(orbit, init, q, e, Tmax, max_steps, forceFunc, integrator, tol);
 
             if (!std::isnan(fin.r[0]))
                 results.push_back({init, fin});
         }
 
         all_results[iv]  = std::move(results);
-
-        // --- Write histograms to a file named with q and e ---
-        /*
-        static std::mutex hist_mutex;
-        {
-            std::lock_guard<std::mutex> lock(hist_mutex);
-            static std::ofstream hist_out(
-                ("histograms_q=" + std::to_string(q) + "_e=" + std::to_string(e) + ".txt")
-            );
-            if (!hist_out.is_open()) {
-                std::cerr << "Error: could not open histograms_q=... for writing\n";
-            } else {
-                hist_out << "# v = " << v << "\n";
-                std::streambuf* oldbuf = std::cout.rdbuf(hist_out.rdbuf());
-                int nBins = 100;
-                std::vector<double> deltaE, deltaT, dvx, dvy, dvz, dLx, dLy, dLz;
-                for (const auto &pair : results) {
-                    const auto &init = pair.first;
-                    const auto &fin = pair.second;
-                    deltaE.push_back(energy_approx(fin.r, fin.v) - energy_approx(init.r, init.v));
-                    deltaT.push_back(fin.t - init.t);
-                    Vec3 dv = asymptotic_velocity_approx(fin.r, fin.v) - asymptotic_velocity_approx(init.r, init.v);
-                    Vec3 dL = angular_momentum(fin.r, fin.v) - angular_momentum(init.r, init.v);
-                    dvx.push_back(dv[0]); dvy.push_back(dv[1]); dvz.push_back(dv[2]);
-                    dLx.push_back(dL[0]); dLy.push_back(dL[1]); dLz.push_back(dL[2]);
-                }
-                printHist("DeltaE",  deltaE, nBins, true);
-                printHist("DeltaVx", dvx,    nBins, true);
-                printHist("DeltaVy", dvy,    nBins, true);
-                printHist("DeltaVz", dvz,    nBins, true);
-                printHist("DeltaLx", dLx,    nBins, true);
-                printHist("DeltaLy", dLy,    nBins, true);
-                printHist("DeltaLz", dLz,    nBins, true);
-                printHist("DeltaT",  deltaT, nBins, false, true);
-                hist_out << "\n";
-                std::cout.rdbuf(oldbuf);
-            }
-        }
-        */
 
         // Optionally print timing info
         auto local_end = std::chrono::high_resolution_clock::now();
@@ -899,11 +902,13 @@ int main(int argc, char* argv[]) {
 
     for (double TmaxCut : TmaxCuts) {
         std::ostringstream fcut;
-        fcut << "q=" << q << "_e=" << e << "_Tcut=";
+        fcut << "q=" << q_str << "_e=" << e_str
+             << "_" << ig_str << "_tol=" << tol_str << "_Tcut=";
         long long Tcut_int = static_cast<long long>(TmaxCut);
         fcut << Tcut_int << ".txt";
         std::ofstream out(fcut.str());
-        out << "# N = " << N << ", rp_max = " << rp_max << ", r_sphere = " << r_sphere << ", T_cut = " << TmaxCut << "\n";
+        out << "# N = " << N << ", rp_max = " << rp_max << ", r_sphere = " << r_sphere
+            << ", T_cut = " << TmaxCut << ", integrator = " << ig_str << ", tol = " << tol << "\n";
         out << "# v\tmean∆E\tSEM_∆E\t∆T\tSEM_∆T\t∆vx\tSEM_∆vx\t∆vy\tSEM_∆vy\t∆vz\tSEM_∆vz\t∆Lx\tSEM_∆Lx\t∆Ly\tSEM_∆Ly\t∆Lz\tSEM_∆Lz\tΔvarpi\tSEM_Δvarpi\tNresolved\n";
         for (int iv = 0; iv < (int)v_values.size(); ++iv) {
             double v = v_values[iv];
@@ -917,8 +922,6 @@ int main(int argc, char* argv[]) {
                     deltaE.push_back(energy_approx(fin.r, fin.v) - energy_approx(init.r, init.v));
                     deltaT.push_back(fin.t - init.t);
                     Vec3 dv = asymptotic_velocity_approx(fin.r, fin.v) - asymptotic_velocity_approx(init.r, init.v);
-                    //std::cout << init.v << " " << fin.v << std::endl;
-                    //std::cout << asymptotic_velocity_approx(init.r, init.v) << " " << asymptotic_velocity_approx(fin.r, fin.v) << std::endl;
                     Vec3 dL = angular_momentum(fin.r, fin.v) - angular_momentum(init.r, init.v);
                     dvx.push_back(dv[0]); dvy.push_back(dv[1]); dvz.push_back(dv[2]);
                     dLx.push_back(dL[0]); dLy.push_back(dL[1]); dLz.push_back(dL[2]);

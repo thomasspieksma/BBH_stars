@@ -44,7 +44,7 @@ Examples:
 EOF
 }
 
-ssh_cmd() { ssh -o ConnectTimeout=10 "$REMOTE_HOST" "$@"; }
+ssh_cmd() { ssh -o ConnectTimeout=30 "$REMOTE_HOST" "$@"; }
 
 # ── deploy ────────────────────────────────────────────────────
 cmd_deploy() {
