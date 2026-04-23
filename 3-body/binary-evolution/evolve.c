@@ -580,12 +580,23 @@ static void compute_rates(double xi, double e, double Vx, double Vy,
 /* ══════════════════════════════════════════════════════════════════════════
  *  Chandrasekhar dynamical friction
  * ══════════════════════════════════════════════════════════════════════════*/
+/*  Effective non-perturbative Coulomb logarithm:
+ *      ln Lambda(u) = (1/2) * ln( (b_max^2 + b_90^2) / (b_min^2 + b_90^2) )
+ *  with b_90(u) = G M / u^2 (cures the small-impact-parameter divergence of
+ *  the perturbative log b_max/b_min).  In dimensionless variables (lengths
+ *  in a_h, velocities in sigma):
+ *      b_min/a_h = 5 e^{-xi} sqrt(1 + 8(1+q)^2 e^{xi} / (5 q u^2))
+ *      b_90/a_h  = 4 (1+q)^2 / (q u^2)
+ *      b_max/a_h = ro                                                   */
 static double ln_lambda(double u, double xi, double q, double ro)
 {
     double ao = exp(-xi);
     double ratio = 8.0*(1+q)*(1+q)*exp(xi) / (5.0*q*u*u);
-    double bm = 5.0*ao*sqrt(1.0 + ratio);
-    double lnL = log(ro / bm);
+    double bmin = 5.0*ao*sqrt(1.0 + ratio);
+    double b90  = 4.0*(1+q)*(1+q) / (q*u*u);
+    double num = ro*ro + b90*b90;
+    double den = bmin*bmin + b90*b90;
+    double lnL = 0.5 * log(num / den);
     return lnL < 0.0 ? 0.0 : lnL;
 }
 
@@ -1176,13 +1187,17 @@ static void usage(const char *prog)
         "  --freeze-e         Freeze eccentricity\n"
         "  --freeze-Vx        Freeze Vx\n"
         "  --freeze-Vy        Freeze Vy\n"
-        "  --freeze-varpi     Freeze varpi\n", prog);
+        "  --freeze-varpi     Freeze varpi\n"
+        "  --bmax-ah VALUE    Override Chandrasekhar outer cutoff b_max/a_h\n"
+        "                     (default 4(1+q)^2/q, i.e. influence radius)\n",
+        prog);
 }
 
 int main(int argc, char **argv)
 {
     double q = 1.0, e0 = 0.5, Vx0 = 0.0, Vy0 = 0.0, w0 = 0.0;
     double xi_start = -1.0, a0_val = -1.0, xi_end = 5.0;
+    double roah_override = -1.0;
     const char *ch_mode_str = "integral";
     const char *data_dir = NULL;
     const char *output_base = "evolution";
@@ -1204,6 +1219,7 @@ int main(int argc, char **argv)
         {"freeze-Vx",     no_argument,       0, 13},
         {"freeze-Vy",     no_argument,       0, 14},
         {"freeze-varpi",  no_argument,       0, 15},
+        {"bmax-ah",       required_argument, 0, 16},
         {"help",          no_argument,       0, 'h'},
         {0, 0, 0, 0}
     };
@@ -1226,6 +1242,7 @@ int main(int argc, char **argv)
         case 13: g_fr_Vx = 1; break;
         case 14: g_fr_Vy = 1; break;
         case 15: g_fr_w  = 1; break;
+        case 16: roah_override = atof(optarg); break;
         case 'h': default: usage(argv[0]); return opt == 'h' ? 0 : 1;
         }
     }
@@ -1258,13 +1275,13 @@ int main(int argc, char **argv)
     }
 
     g_q = q;
-    g_roah = 4.0*(1+q)*(1+q)/q;
+    g_roah = (roah_override > 0.0) ? roah_override : 4.0*(1+q)*(1+q)/q;
     g_nst = 4;
 
     printf("Binary evolution: q=%g, e0=%g, V0/sigma=(%g, %g), varpi0=%g\n",
            q, e0, Vx0, Vy0, w0);
-    printf("xi in [%.4f, %g]  (a/a_h: %.4f -> %.6f), Chandrasekhar: %s\n",
-           xi_start, xi_end, exp(-xi_start), exp(-xi_end), ch_mode_str);
+    printf("xi in [%.4f, %g]  (a/a_h: %.4f -> %.6f), Chandrasekhar: %s, b_max/a_h=%g\n",
+           xi_start, xi_end, exp(-xi_start), exp(-xi_end), ch_mode_str, g_roah);
 
     /* Load data */
     if (load_dataset(q, data_dir) != 0) return 1;

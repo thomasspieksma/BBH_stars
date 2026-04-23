@@ -386,22 +386,45 @@ def compute_rates_fast(xi, e, Vx_s, Vy_s, varpi, tables):
 # ── Chandrasekhar dynamical friction ──────────────────────────────────────────
 
 def _ln_lambda(u_tilde, xi, q, r_outer_ah):
-    """Coulomb logarithm ln(r_outer / b_max) as a function of u/sigma.
+    r"""Effective Coulomb logarithm for dynamical friction at relative
+    speed :math:`u = u\_tilde \cdot \sigma`.
 
-    In dimensionless variables (lengths in a_h, velocities in sigma):
-        b_max / a_h = 5 exp(-xi) sqrt(1 + 8(1+q)^2 exp(xi) / (5 q u_tilde^2))
+    Uses the *non-perturbative* (exact Keplerian-hyperbola) expression
+
+    .. math::
+        \ln\Lambda(u) = \tfrac12 \ln\!\Bigl(
+            \frac{b_{\max}^2 + b_{90}^2(u)}{b_{\min}^2(u) + b_{90}^2(u)}
+        \Bigr)\,, \qquad b_{90}(u) = \tfrac{G M}{u^2}\,.
+
+    This reduces to :math:`\ln(b_{\max}/b_{\min})` when
+    :math:`b_{90} \ll b_{\min}`, and to :math:`\ln(b_{\max}/b_{90})` when
+    :math:`b_{\min} \ll b_{90} \ll b_{\max}`; it is finite as
+    :math:`b_{\min} \to 0`.
+
+    In dimensionless variables (lengths in :math:`a_h`, velocities in
+    :math:`\sigma`):
+
+    * :math:`b_{\min}/a_h = 5\, e^{-\xi}\,\sqrt{1 + 8(1+q)^2 e^{\xi} / (5 q\, \tilde u^2)}`
+      (cutoff above which the analytic Chandrasekhar piece takes over from
+      the 3-body simulations);
+    * :math:`b_{90}/a_h = 4 (1+q)^2 / (q\, \tilde u^2)`;
+    * :math:`b_{\max}/a_h =` ``r_outer_ah``.
     """
     a_over_ah = np.exp(-xi)
     ratio = 8.0 * (1.0 + q)**2 * np.exp(xi) / (5.0 * q * u_tilde**2)
-    bmax_ah = 5.0 * a_over_ah * np.sqrt(1.0 + ratio)
-    lnL = np.log(r_outer_ah / bmax_ah)
+    bmin_ah = 5.0 * a_over_ah * np.sqrt(1.0 + ratio)
+    b90_ah = 4.0 * (1.0 + q)**2 / (q * u_tilde**2)
+    num = r_outer_ah * r_outer_ah + b90_ah * b90_ah
+    den = bmin_ah * bmin_ah + b90_ah * b90_ah
+    lnL = 0.5 * np.log(num / den)
     if lnL < 0.0:
         return 0.0
     return lnL
 
 
 def chandrasekhar_decel_integral(V_tilde, xi, q, r_outer_ah):
-    r"""Full Chandrasekhar integral with velocity-dependent ln Lambda.
+    r"""Full Chandrasekhar integral with velocity-dependent *non-perturbative*
+    Coulomb logarithm (cured at small impact parameter by :math:`b_{90}`).
 
     Returns the dimensionless scalar *J* such that the Chandrasekhar
     contribution to :math:`d\tilde V_x / d\xi` is

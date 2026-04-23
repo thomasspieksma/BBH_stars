@@ -131,46 +131,63 @@ Chandrasekhar correction).
 ## 5. Chandrasekhar dynamical friction (distant encounters)
 
 The three-body scattering experiments capture all encounters with pericenter
-$r_p < r_{p,\max} = 5a$, i.e., impact parameter $b < b_{\max}(u)$ where
+$r_p < r_{p,\max} = 5a$, i.e., impact parameter $b < b_{\min}(u)$ where
 
-$$b_{\max}(u) = r_{p,\max}\sqrt{1 + \frac{2GM}{u^2\, r_{p,\max}}} = 5a\sqrt{1 + \frac{2GM}{5a\,u^2}}$$
+$$b_{\min}(u) = r_{p,\max}\sqrt{1 + \frac{2GM}{u^2\, r_{p,\max}}} = 5a\sqrt{1 + \frac{2GM}{5a\,u^2}}$$
 
 and $u$ is the speed of the star relative to the binary. For more distant
-encounters ($b > b_{\max}$), the binary acts as a point mass $M$ and the
-back-reaction is well described by two-body scattering.
+encounters ($b > b_{\min}$), the binary acts as a point mass $M$ and the
+back-reaction is well described by two-body (Keplerian-hyperbola) scattering.
+The lower limit $b_{\min}(u)$ should not be confused with the divergence
+regulator of the perturbative Chandrasekhar formula: as shown below, the
+exact two-body integral is *finite* in the limit $b_{\min}\to 0$ thanks to
+the $90^\circ$-deflection scale $b_{90}(u) = GM/u^2$.
 
 ### Integral formula
 
 For a star approaching the binary at relative speed $u$ from direction
-$\hat u$ (in the binary rest frame), the two-body drag from impact parameters
-$b \in [b_{\max}(u),\, r_{\rm outer}]$ produces an acceleration of the binary
-along $\hat u$ equal to
+$\hat u$ (in the binary rest frame), the *exact* deflection of an impact-parameter
+$b$ Keplerian hyperbola (not a perturbative expansion in $b_{90}/b$) yields,
+upon integrating over $b \in [b_{\min}(u),\, b_{\max}]$, an acceleration of the
+binary along $\hat u$ equal to
 
-$$\frac{4\pi G^2 M \rho}{u^2}\,\ln\!\left(\frac{r_{\rm outer}}{b_{\max}(u)}\right)$$
+$$\frac{4\pi G^2 M \rho}{u^2}\,
+   \tfrac12\ln\!\left(\frac{b_{\max}^2 + b_{90}^2(u)}{b_{\min}^2(u) + b_{90}^2(u)}\right),
+   \qquad b_{90}(u) = \frac{GM}{u^2},$$
 
-per unit phase-space density. Integrating over all stars, weighted by the
-shifted Maxwellian $f_{\rm 3D}(\vec u + \vec V)$ (where $\vec u + \vec V$ is
-the lab-frame velocity of the star), gives the total Chandrasekhar
+per unit phase-space density. The factor $\tfrac12\ln[(b_{\max}^2+b_{90}^2)/(b_{\min}^2+b_{90}^2)]$
+replaces the conventional $\ln(b_{\max}/b_{\min})$ Coulomb logarithm: it (i)
+reduces to it whenever $b_{90}\ll b_{\min}$, (ii) becomes
+$\ln(b_{\max}/b_{90})$ in the more relevant regime $b_{\min}\ll b_{90}\ll b_{\max}$,
+and (iii) is regular as $b_{\min}\to 0$. Integrating over all stars, weighted
+by the shifted Maxwellian $f_{\rm 3D}(\vec u + \vec V)$ (where $\vec u + \vec V$
+is the lab-frame velocity of the star), gives the total Chandrasekhar
 deceleration:
 
-$$\boxed{\dot{\vec V}_{\rm Ch} = 4\pi G^2 M \rho \int \frac{\hat u}{u^2}\,\ln\!\left(\frac{r_{\rm outer}}{b_{\max}(u)}\right) f_{\rm 3D}(\vec u + \vec V)\, d^3u\,,}$$
+$$\boxed{\dot{\vec V}_{\rm Ch} = 4\pi G^2 M \rho \int \frac{\hat u}{u^2}\,
+   \tfrac12\ln\!\left(\frac{b_{\max}^2 + b_{90}^2(u)}{b_{\min}^2(u) + b_{90}^2(u)}\right)
+   f_{\rm 3D}(\vec u + \vec V)\, d^3u\,,}$$
 
-where $r_{\rm outer}$ is an outer cutoff (e.g., the influence radius
-$r_i \sim GM/\sigma^2$). This integral has the same structure as the
+where $b_{\max}$ is an outer cutoff (e.g., the influence radius
+$r_i = GM/\sigma^2$). This integral has the same structure as the
 three-body force integral and can be evaluated numerically in the same way.
 
 ### Constant-$\ln\Lambda$ limit
 
-When $\ln\Lambda \equiv \ln(r_{\rm outer}/b_{\max})$ is pulled out of the
-integral (i.e., treated as independent of $u$), the angular integration can be
-done analytically and the standard Chandrasekhar formula is recovered:
+When the (now non-perturbative) effective Coulomb logarithm
+
+$$\ln\Lambda \equiv \tfrac12\ln\!\left(\frac{b_{\max}^2 + b_{90}^2}{b_{\min}^2 + b_{90}^2}\right)$$
+
+is pulled out of the integral (i.e., treated as independent of $u$), the
+angular integration can be done analytically and the standard Chandrasekhar
+formula is recovered:
 
 $$\dot{\vec V}_{\rm Ch} = -\frac{4\pi G^2 M \rho\,\ln\Lambda}{V^2}\left[\operatorname{erf}(X) - \frac{2X}{\sqrt\pi}\,e^{-X^2}\right] \hat V\,,$$
 
 where $X = V/(\sqrt 2\,\sigma)$ and $V = |\vec V|$. This approximation is
 adequate when $\ln\Lambda$ varies slowly over the range of $u$ that
-contributes to the integral. For a quick estimate, $b_{\max}$ can be evaluated
-at a characteristic velocity, e.g. $u \sim \sigma$.
+contributes to the integral. For a quick estimate, $b_{90}$ and $b_{\min}$ can
+be evaluated at a characteristic velocity, e.g. $u \sim \sigma$.
 
 ### Note
 

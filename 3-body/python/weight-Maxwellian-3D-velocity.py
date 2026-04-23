@@ -568,10 +568,17 @@ def isotropic_from_text(text_file, q, e, rp_max, rho=1.0):
 # ── Chandrasekhar dynamical friction ─────────────────────────────────────────
 
 def chandrasekhar_F(V_mag, sigma, rho, ln_Lambda):
-    """Chandrasekhar dynamical friction force on the binary.
+    """Chandrasekhar dynamical friction force on the binary in the
+    constant-Coulomb-log approximation (used as a sanity-check curve).
 
     Returns the force component along V_hat (negative = deceleration),
     where V is the binary centre-of-mass velocity.  Units: G=M=1.
+
+    *ln_Lambda* should be the effective Coulomb logarithm derived from the
+    non-perturbative formula, e.g.
+        ln_Lambda = (1/2) * ln((b_max^2 + b_90^2) / (b_min^2 + b_90^2))
+    evaluated at a representative velocity (e.g. v ~ sigma).  See
+    :func:`effective_ln_lambda`.
     """
     X = V_mag / (np.sqrt(2) * sigma)
     bracket = erf(X) - 2 * X / np.sqrt(np.pi) * np.exp(-X**2)
@@ -579,22 +586,58 @@ def chandrasekhar_F(V_mag, sigma, rho, ln_Lambda):
 
 
 def _ln_lambda(u_tilde, xi, q, r_outer_ah):
-    """Coulomb logarithm ln(r_outer / b_max) as a function of u/sigma.
+    r"""Effective Coulomb logarithm for dynamical friction at relative
+    speed :math:`u = u\_tilde \cdot \sigma`.
 
-    In dimensionless variables (lengths in a_h, velocities in sigma):
-        b_max / a_h = 5 exp(-xi) sqrt(1 + 8(1+q)^2 exp(xi) / (5 q u_tilde^2))
+    Uses the *non-perturbative* expression obtained from the exact Keplerian
+    hyperbola integral over impact parameters,
+
+    .. math::
+        \ln\Lambda(u) = \tfrac12 \ln\!\Bigl(
+            \frac{b_{\max}^2 + b_{90}^2(u)}{b_{\min}^2(u) + b_{90}^2(u)}
+        \Bigr)\,,
+
+    with the 90-degree deflection scale :math:`b_{90}(u) = G M / u^2`.  This
+    reduces to the standard :math:`\ln(b_{\max}/b_{\min})` when
+    :math:`b_{90} \ll b_{\min}`, and to :math:`\ln(b_{\max}/b_{90})` when
+    :math:`b_{\min} \ll b_{90} \ll b_{\max}`; it is finite as
+    :math:`b_{\min} \to 0`.
+
+    In dimensionless variables (lengths in :math:`a_h`, velocities in
+    :math:`\sigma`):
+
+    * :math:`b_{\min}/a_h = 5\, e^{-\xi}\,\sqrt{1 + 8(1+q)^2 e^{\xi} / (5 q\, \tilde u^2)}`
+      (cutoff above which the analytic Chandrasekhar piece takes over from
+      the 3-body simulations, see :eq:`bmin-v` in the paper);
+    * :math:`b_{90}/a_h = 4 (1+q)^2 / (q\, \tilde u^2)`;
+    * :math:`b_{\max}/a_h =` ``r_outer_ah``.
     """
     a_over_ah = np.exp(-xi)
     ratio = 8.0 * (1.0 + q)**2 * np.exp(xi) / (5.0 * q * u_tilde**2)
-    bmax_ah = 5.0 * a_over_ah * np.sqrt(1.0 + ratio)
-    lnL = np.log(r_outer_ah / bmax_ah)
+    bmin_ah = 5.0 * a_over_ah * np.sqrt(1.0 + ratio)
+    b90_ah = 4.0 * (1.0 + q)**2 / (q * u_tilde**2)
+    num = r_outer_ah * r_outer_ah + b90_ah * b90_ah
+    den = bmin_ah * bmin_ah + b90_ah * b90_ah
+    lnL = 0.5 * np.log(num / den)
     if lnL < 0.0:
         return 0.0
     return lnL
 
 
+def effective_ln_lambda(V_tilde, xi, q, r_outer_ah, u_tilde=1.0):
+    """Effective constant Coulomb log evaluated at a representative speed.
+
+    Convenience wrapper around :func:`_ln_lambda` that picks a single value
+    of the relative speed (default :math:`u = \\sigma`, i.e.
+    ``u_tilde = 1``) for use in the constant-:math:`\\ln\\Lambda` Chandrasekhar
+    erf formula.
+    """
+    return _ln_lambda(u_tilde, xi, q, r_outer_ah)
+
+
 def chandrasekhar_decel_integral(V_tilde, xi, q, r_outer_ah):
-    r"""Full Chandrasekhar integral with velocity-dependent ln Lambda.
+    r"""Full Chandrasekhar integral with velocity-dependent, *non-perturbative*
+    Coulomb logarithm (cured at small impact parameter by :math:`b_{90}`).
 
     Returns the dimensionless scalar *J* such that the Chandrasekhar
     force vector in code units (G=M=a=1) is
@@ -1184,13 +1227,18 @@ if __name__ == '__main__':
             F_par_sim = np.array(F_par_sim)
             sF_par_sim = np.array(sF_par_sim)
 
-            bmax_arr = b_max_val(V_test_ratios * sig, rp_max)
-            ln_L_arr = np.log(np.maximum(bmax_arr, 1.01))
-            F_ch = chandrasekhar_F(V_test_ratios * sig, sig, rho, ln_L_arr)
+            xi_i = np.log(ah_val)
+            J_arr = np.array([
+                chandrasekhar_decel_integral(Vr, xi_i, q, r_outer_ah)
+                for Vr in V_test_ratios])
+            F_ch = (4.0 * np.pi * rho / sig**2) * J_arr
+            ln_L_arr = np.array([
+                _ln_lambda(max(Vr, 1e-3), xi_i, q, r_outer_ah)
+                for Vr in V_test_ratios])
             mean_lnL = np.mean(ln_L_arr)
 
             lbl_sim = f'$a/a_h={1/ah_val:.2g}$'
-            lbl_ch  = f'Ch., $\\langle\\ln\\Lambda\\rangle\\approx{mean_lnL:.1f}$'
+            lbl_ch  = f'Ch. (exact), $\\langle\\ln\\Lambda\\rangle\\approx{mean_lnL:.1f}$'
 
             line = ax_F.errorbar(V_test_ratios, np.abs(F_par_sim),
                                   yerr=sF_par_sim,
