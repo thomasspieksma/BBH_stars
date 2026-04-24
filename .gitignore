@@ -11,6 +11,7 @@ __pycache__/
 *.log
 *.out
 *.synctex.gz
+*synctex(busy)*
 *.blg
 *.bbl
 *.fdb_latexmk
@@ -21,3 +22,6 @@ __pycache__/
 *.nav
 *.snm
 *.vrb
+
+# Finder duplicate evolution outputs
+3-body/binary-evolution/*\ 2.dat
