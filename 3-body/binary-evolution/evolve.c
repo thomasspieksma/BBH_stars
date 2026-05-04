@@ -1275,7 +1275,9 @@ int main(int argc, char **argv)
     }
 
     g_q = q;
-    g_roah = (roah_override > 0.0) ? roah_override : 4.0*(1+q)*(1+q)/q;
+    //g_roah = (roah_override > 0.0) ? roah_override : 4.0*(1+q)*(1+q)/q;
+    g_roah = (roah_override > 0.0) ? roah_override : sqrt(4.0*(1+q)*(1+q)/q);
+
     g_nst = 4;
 
     printf("Binary evolution: q=%g, e0=%g, V0/sigma=(%g, %g), varpi0=%g\n",
