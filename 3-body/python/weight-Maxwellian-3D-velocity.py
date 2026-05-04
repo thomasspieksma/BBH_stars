@@ -24,6 +24,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.special import erf, lpmv
 from scipy.integrate import quad
+from scipy.optimize import brentq
 import struct
 import argparse
 
@@ -317,7 +318,8 @@ def real_Ylm_all(cos_theta, phi, l_max):
 
 # ── SH-based reweighting engine ──────────────────────────────────────────────
 
-def reweight_from_harmonics(meta, harm_bins, V, sigma, rho=1.0):
+def reweight_from_harmonics(meta, harm_bins, V, sigma, rho=1.0, *,
+                            l_max_use=None):
     """Reconstruct Maxwellian-weighted integrals from SH moment data.
 
     V is the binary centre-of-mass velocity (in code units).  The shifted
@@ -328,6 +330,14 @@ def reweight_from_harmonics(meta, harm_bins, V, sigma, rho=1.0):
     and alpha = v|V|/sigma^2.
 
     Returns the same dict as reweight() (P, F, tau, H, K, P_x, P_y, Q, uncertainties).
+
+    Parameters
+    ----------
+    l_max_use : int, optional
+        If set, drop all spherical-harmonic contributions with
+        :math:`l > l_{\\max,\\mathrm{use}}` (capped at ``meta['l_max']``).
+        Used by the numerical-stability diagnostic to test convergence
+        of the SH expansion; default keeps the full set.
     """
     from scipy.special import ive
 
@@ -337,6 +347,15 @@ def reweight_from_harmonics(meta, harm_bins, V, sigma, rho=1.0):
     l_max  = meta['l_max']
     mu     = q / (1 + q)**2
     n_sh   = (l_max + 1)**2
+
+    if l_max_use is None or l_max_use >= l_max:
+        l_mask = None
+    else:
+        if l_max_use < 0:
+            raise ValueError(f"l_max_use must be >= 0, got {l_max_use}")
+        l_mask = np.zeros(n_sh, dtype=bool)
+        for ll in range(l_max_use + 1):
+            l_mask[ll*ll:(ll+1)*(ll+1)] = True
 
     V = np.asarray(V, dtype=np.float64)
     V_mag = np.linalg.norm(V)
@@ -389,6 +408,9 @@ def reweight_from_harmonics(meta, harm_bins, V, sigma, rho=1.0):
 
         w1 = s1[l_idx] * Ylm_negV          # shape (n_sh,)
         w2 = s2[l_idx] * Ylm_negV
+        if l_mask is not None:
+            w1 = w1 * l_mask
+            w2 = w2 * l_mask
 
         fourpi = 4 * np.pi
         M  = b['M']    # (8, n_sh)
@@ -635,7 +657,8 @@ def effective_ln_lambda(V_tilde, xi, q, r_outer_ah, u_tilde=1.0):
     return _ln_lambda(u_tilde, xi, q, r_outer_ah)
 
 
-def chandrasekhar_decel_integral(V_tilde, xi, q, r_outer_ah):
+def chandrasekhar_decel_integral(V_tilde, xi, q, r_outer_ah, *,
+                                 quad_kwargs=None):
     r"""Full Chandrasekhar integral with velocity-dependent, *non-perturbative*
     Coulomb logarithm (cured at small impact parameter by :math:`b_{90}`).
 
@@ -646,9 +669,20 @@ def chandrasekhar_decel_integral(V_tilde, xi, q, r_outer_ah):
 
     where V_hat is the CoM velocity direction.
     *J* is negative (deceleration).
+
+    Parameters
+    ----------
+    quad_kwargs : dict, optional
+        Extra keyword arguments forwarded to :func:`scipy.integrate.quad`
+        (e.g. ``{'epsabs': 1e-12, 'epsrel': 1e-12, 'limit': 500}``).  The
+        default is ``{'limit': 200}`` (matching the historical behaviour).
     """
     if V_tilde < 1e-15:
         return 0.0
+
+    qk = {'limit': 200}
+    if quad_kwargs:
+        qk.update(quad_kwargs)
 
     def integrand(u):
         if u < 1e-30:
@@ -667,9 +701,206 @@ def chandrasekhar_decel_integral(V_tilde, xi, q, r_outer_ah):
                                 - (1.0 + alpha) * e_plus)
         return lnL * 2.0 * kernel_exp / alpha**2
 
-    J, _ = quad(integrand, 0.0, np.inf, limit=200)
+    J, _ = quad(integrand, 0.0, np.inf, **qk)
     J /= np.sqrt(2.0 * np.pi)
     return J
+
+
+def mean_ln_lambda_const_bmin(bmin_over_ah, xi, q, r_outer_ah, *,
+                              quad_kwargs=None):
+    r"""Kernel-weighted Coulomb logarithm with a *constant* (velocity-
+    independent) ``b_min``.
+
+    Computes the small-:math:`V` effective Coulomb logarithm
+
+    .. math::
+        \langle\ln\Lambda\rangle =
+        \tfrac12 \int_0^{\infty}\!du\,u\,e^{-u^2/2}
+        \ln\!\Bigl(
+            \frac{b_{\max}^2 + b_{90}^2(u)}{b_{\min}^2 + b_{90}^2(u)}
+        \Bigr)\,,
+
+    where :math:`b_{90}/a_h = 4(1+q)^2/(q\,\tilde u^2)` and
+    :math:`\tilde u = u/\sigma`.  Lengths are in units of ``a_h``.
+
+    This is the proper small-:math:`V` limit of the exact 1D drag kernel
+    (Eq. ``Fdf-1D`` in the paper), obtained by Taylor expansion to linear
+    order in :math:`V/\sigma`.  The kernel weight :math:`u\,e^{-u^2/2}`
+    is normalised, :math:`\int_0^\infty u e^{-u^2/2} du = 1`, so a
+    constant ``ln Λ`` is recovered exactly.
+
+    Parameters
+    ----------
+    bmin_over_ah : float
+        Constant minimum impact parameter, in units of ``a_h``.
+    xi : float
+        Hardness parameter ``xi = ln(a_h/a)`` (unused here; kept for API
+        symmetry with :func:`_ln_lambda` and :func:`chandrasekhar_decel_integral`).
+    q : float
+        Mass ratio.
+    r_outer_ah : float
+        Maximum impact parameter, in units of ``a_h``.
+    quad_kwargs : dict, optional
+        Extra keyword arguments forwarded to :func:`scipy.integrate.quad`
+        (e.g. ``{'epsabs': 1e-12, 'epsrel': 1e-12, 'limit': 500}``).  The
+        default is ``{'limit': 200}`` (matching the historical behaviour).
+    """
+    bmin2 = bmin_over_ah * bmin_over_ah
+    bmax2 = r_outer_ah * r_outer_ah
+    coeff = 4.0 * (1.0 + q)**2 / q
+
+    qk = {'limit': 200}
+    if quad_kwargs:
+        qk.update(quad_kwargs)
+
+    def integrand(u):
+        if u < 1e-30:
+            return 0.0
+        b90_ah = coeff / (u * u)
+        b902 = b90_ah * b90_ah
+        return u * np.exp(-0.5 * u * u) * np.log(
+            (bmax2 + b902) / (bmin2 + b902)
+        )
+
+    val, _ = quad(integrand, 0.0, np.inf, **qk)
+    return 0.5 * val
+
+
+def mean_ln_lambda_max(xi, q, r_outer_ah, *, quad_kwargs=None):
+    r"""Maximum kernel-weighted Coulomb logarithm achievable at fixed
+    ``b_max``.
+
+    Equivalent to :func:`mean_ln_lambda_const_bmin` evaluated at
+    ``b_min = 0``.  Bumping ``b_min`` away from zero only ever decreases
+    :math:`\langle\log\Lambda\rangle`, so the value returned here is the
+    upper bound of the inversion target in :func:`invert_mean_ln_lambda`
+    and the reference value used by :func:`bmin_sq_linear`.
+    """
+    return mean_ln_lambda_const_bmin(0.0, xi, q, r_outer_ah,
+                                     quad_kwargs=quad_kwargs)
+
+
+def bmin_sq_linear(mean_lnL_extracted, xi, q, r_outer_ah, *,
+                   quad_kwargs=None, lnL_max=None):
+    r"""Closed-form linear extraction of :math:`b_{\min}^2/a_h^2`.
+
+    Linearising :func:`mean_ln_lambda_const_bmin` around
+    :math:`b_{\min}^2 = 0` gives
+
+    .. math::
+        \langle\log\Lambda\rangle \;\approx\; \langle\log\Lambda\rangle_{\max}
+            \;-\; \alpha\, b_{\min}^2 \,,
+
+    with the slope evaluated analytically from
+    :math:`b_{90}/a_h = 4(1+q)^2/(q\tilde u^2)` and
+    :math:`\int_0^\infty u^5 e^{-u^2/2}\,du = 8`,
+
+    .. math::
+        \alpha
+        \;\equiv\; -\,\frac{\partial\langle\log\Lambda\rangle}
+                            {\partial b_{\min}^2}\bigg|_{b_{\min}^2=0}
+        \;=\; \frac{q^2}{4(1+q)^4\,a_h^2}\,.
+
+    Inverting linearly,
+
+    .. math::
+        \boxed{\,
+            \frac{b_{\min}^2}{a_h^2}
+            \;=\; \frac{4(1+q)^4}{q^2}
+            \Bigl(\langle\log\Lambda\rangle_{\max} - \langle\log\Lambda\rangle\Bigr)
+        \,}\,.
+
+    The result is well-defined for either sign: positive when the
+    extracted :math:`\langle\log\Lambda\rangle` lies below
+    :math:`\langle\log\Lambda\rangle_{\max}` (point-particle interpretation
+    valid), negative in the saturated regime (analytic continuation).
+    Over the validity window :math:`b_{\min}^2 \ll b_{90}^2(\sigma) \sim r_i^2`
+    it agrees with the full nonlinear inversion of
+    :func:`invert_mean_ln_lambda` at the few-percent level.
+
+    Parameters
+    ----------
+    mean_lnL_extracted : float or array
+        :math:`\langle\log\Lambda\rangle` measured from the simulations.
+    xi : float
+        Hardness :math:`\xi = \log(a_h/a)` (kept for API symmetry).
+    q : float
+        Mass ratio.
+    r_outer_ah : float
+        Outer cutoff :math:`b_{\max}/a_h` (used to compute
+        :math:`\langle\log\Lambda\rangle_{\max}` if not supplied).
+    quad_kwargs : dict, optional
+        Forwarded to :func:`mean_ln_lambda_max` when ``lnL_max`` is None.
+    lnL_max : float, optional
+        Pre-computed :math:`\langle\log\Lambda\rangle_{\max}`.  Avoids one
+        :func:`scipy.integrate.quad` call per inversion when the same
+        ``(xi, q, r_outer_ah)`` is reused.
+
+    Returns
+    -------
+    float or array
+        :math:`b_{\min}^2/a_h^2` (signed).
+    """
+    if lnL_max is None:
+        lnL_max = mean_ln_lambda_max(xi, q, r_outer_ah,
+                                     quad_kwargs=quad_kwargs)
+    coeff = 4.0 * (1.0 + q)**4 / (q * q)
+    return coeff * (lnL_max - mean_lnL_extracted)
+
+
+def invert_mean_ln_lambda(target, xi, q, r_outer_ah, *, warn=False):
+    r"""Invert :func:`mean_ln_lambda_const_bmin` for ``b_min``.
+
+    Given a target value of :math:`\langle\ln\Lambda\rangle`, returns the
+    constant ``b_min/a_h`` that reproduces it.  Uses :func:`scipy.optimize.brentq`
+    on the bracket ``[0, r_outer_ah]``; the function is monotonically
+    decreasing in ``b_min`` from
+    :math:`\langle\ln\Lambda\rangle_{\max}` (at ``b_min = 0``) to ``0``
+    (at ``b_min = r_outer_ah``).
+
+    Edge cases:
+      * ``target <= 0`` → returns ``r_outer_ah`` (the IR cutoff).
+      * ``target >= ⟨ln Λ⟩(b_min=0)`` → returns ``np.nan`` and optionally
+        warns.  Physically this signals that the inferred drag exceeds
+        what the assumed ``b_max`` plus the exact log can deliver, so the
+        point-particle interpretation breaks down.
+    """
+    lnL_max = mean_ln_lambda_const_bmin(0.0, xi, q, r_outer_ah)
+    if not np.isfinite(target):
+        return np.nan
+    if target <= 0.0:
+        return r_outer_ah
+    if target >= lnL_max:
+        if warn:
+            import warnings
+            warnings.warn(
+                f"invert_mean_ln_lambda: target={target:.4g} exceeds "
+                f"max achievable ⟨lnΛ⟩={lnL_max:.4g} "
+                f"(q={q}, r_outer_ah={r_outer_ah}); returning NaN."
+            )
+        return np.nan
+
+    def root_fn(bmin_ah):
+        return mean_ln_lambda_const_bmin(bmin_ah, xi, q, r_outer_ah) - target
+
+    return brentq(root_fn, 0.0, r_outer_ah, xtol=1e-12, rtol=1e-10)
+
+
+def _selfcheck_invert_mean_ln_lambda():
+    """Round-trip sanity check for :func:`invert_mean_ln_lambda`."""
+    for q in (0.01, 0.2, 0.9):
+        r_outer_ah = 4.0 * (1.0 + q)**2 / q
+        lnL_max = mean_ln_lambda_const_bmin(0.0, 0.0, q, r_outer_ah)
+        for frac in (0.1, 0.3, 0.5, 0.7, 0.9):
+            target = frac * lnL_max
+            bmin = invert_mean_ln_lambda(target, 0.0, q, r_outer_ah)
+            recovered = mean_ln_lambda_const_bmin(bmin, 0.0, q, r_outer_ah)
+            assert abs(recovered - target) < 1e-8, (
+                f"round-trip failed: q={q}, target={target:.6g}, "
+                f"bmin={bmin:.6g}, recovered={recovered:.6g}"
+            )
+    return True
+
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 
