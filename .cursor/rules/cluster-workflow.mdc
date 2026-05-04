@@ -7,12 +7,15 @@ globs:
 alwaysApply: false
 ---
 
-# Git Discipline
+# Git discipline
 
-Before starting any work, always pull the latest changes:
+**When the user asks to manage all things git / manage git:** follow `.cursor/rules/git-workflow.mdc` exactly — always **`git fetch origin`** first, then **`git status -sb`**, then **`git pull`** if behind **`origin/main`**, then commit/push if there are local changes. Do not rely on `git status` alone before a fetch; it can look “up to date” while GitHub is ahead.
+
+Before starting other work on this repo, sync with the remote (fetch, then pull if behind):
 
 ```
-git pull
+git fetch origin
+git pull --no-rebase origin main   # if behind origin/main
 ```
 
 After any file edit (code changes, new files, config updates, etc.), stage, commit, and push:
@@ -20,7 +23,7 @@ After any file edit (code changes, new files, config updates, etc.), stage, comm
 ```
 git add -A
 git commit -m "<concise description of the change>"
-git push
+git push origin main
 ```
 
 This applies to every editing session — never leave uncommitted or unpushed work.
