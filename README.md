@@ -192,13 +192,14 @@ integrator inside `evolveParticle()` of `main.cpp` (`rk45Step`, `pihajokiStep`,
 ## Citation
 
 ```bibtex
-@article{Tomaselli:2026,
-  title  = {Self-acceleration of Hardening Binaries},
-  author = {Tomaselli, Giovanni Maria and Spieksma, Thomas F. M.},
-  eprint = {2605.00976},
-  archivePrefix = {arXiv},
-  primaryClass  = {astro-ph.GA},
-  year   = {2026}
+@article{Tomaselli:2026uqg,
+    author = "Tomaselli, Giovanni Maria and Spieksma, Thomas F. M.",
+    title = "{Self-acceleration of Hardening Binaries}",
+    eprint = "2605.00976",
+    archivePrefix = "arXiv",
+    primaryClass = "astro-ph.GA",
+    month = "5",
+    year = "2026"
 }
 ```
 
