@@ -2,13 +2,11 @@
 #
 # download_data.sh — selectively fetch the BBH_stars datasets.
 #
-# Run this from inside an existing clone of the repository. It uses
-# `git sparse-checkout` for plain-git data and `git lfs pull --include` for
-# the LFS-tracked `.bin` harmonics files.
+# Run this from inside an existing clone of the repository. The big datasets
+# are both LFS-tracked, so this script just decides which LFS files to pull.
 #
 # For the smallest possible clone, see the README ("Partial download" section)
-# for the recommended `git clone --filter=blob:none` + GIT_LFS_SKIP_SMUDGE=1
-# invocation.
+# for the recommended `GIT_LFS_SKIP_SMUDGE=1 git clone ...` invocation.
 #
 # Usage:
 #   ./download_data.sh                  # interactive menu
@@ -23,56 +21,34 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
-DIR_SMALL=(
-    "3-body/3-body-code"
-    "3-body/binary-evolution"
-    "3-body/analysis-scripts"
-    "N-body"
-    "3-body/3-body-data/convergence-tests"
-    "3-body/3-body-data/data-V=0"
-    "3-body/3-body-data/data-Vneq0"
-    "3-body/3-body-data/stopping-condition-3"
-)
 DIR_VARTMAX="3-body/3-body-data/data-V=0-varying-Tmax"
 DIR_VNEQ0="3-body/3-body-data/data-Vneq0"
 
-apply_sparse() {
-    git sparse-checkout init --no-cone >/dev/null
-    git sparse-checkout set "$@"
-    git checkout HEAD -- . 2>/dev/null || true
-}
-
-set_code_only()  { apply_sparse '/*' '!3-body/3-body-data'; }
-set_small()      { apply_sparse '/*' "!$DIR_VARTMAX"; }
-set_with_v0var() { apply_sparse '/*'; }
-
-pull_vneq0() {
-    local pattern="${1:-*}"
-    echo "Pulling LFS files in $DIR_VNEQ0 matching: $pattern"
-    git lfs pull --include="$DIR_VNEQ0/$pattern"
+pull_lfs() {
+    local label="$1"
+    local pattern="$2"
+    echo "Pulling LFS files matching: $pattern  ($label)"
+    git lfs pull --include="$pattern"
 }
 
 mode="${1:-}"
 case "$mode" in
     code-only)
-        set_code_only
-        echo "Sparse-checkout: code only (data directories excluded)."
+        echo "Code-only: nothing to fetch (LFS data left unsmudged)."
         ;;
     small)
-        set_small
-        echo "Sparse-checkout: code + small datasets (data-V=0-varying-Tmax excluded)."
+        echo "Small: small text files are already in your working tree."
+        echo "Skipping the two large LFS datasets."
         ;;
     V0)
-        set_with_v0var
-        echo "Sparse-checkout: includes data-V=0-varying-Tmax (~2.4 GB)."
+        pull_lfs "data-V=0-varying-Tmax" "$DIR_VARTMAX/*"
         ;;
     Vneq0)
-        set_small
-        pull_vneq0 "${2:-*}"
+        pull_lfs "data-Vneq0" "$DIR_VNEQ0/${2:-*}"
         ;;
     all)
-        set_with_v0var
-        pull_vneq0 "*"
+        pull_lfs "data-V=0-varying-Tmax" "$DIR_VARTMAX/*"
+        pull_lfs "data-Vneq0"            "$DIR_VNEQ0/*"
         ;;
     "")
         cat <<'EOF'

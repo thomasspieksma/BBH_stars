@@ -46,22 +46,23 @@ download_data.sh       — selectively fetch datasets after cloning (see below)
 
 ## ⚠ Data size and partial download
 
-A full clone is **~6 GB** because of two large datasets:
+A full clone with all data is **~6 GB**. The two large datasets are both stored
+in Git LFS:
 
-| Path                                            | Size    | Storage    |
-|-------------------------------------------------|---------|------------|
-| `3-body/3-body-data/data-V=0-varying-Tmax/`     | ~2.4 GB | plain git  |
-| `3-body/3-body-data/data-Vneq0/`                | ~3.5 GB | Git LFS    |
+| Path                                            | Size    |
+|-------------------------------------------------|---------|
+| `3-body/3-body-data/data-V=0-varying-Tmax/`     | ~2.4 GB |
+| `3-body/3-body-data/data-Vneq0/`                | ~3.5 GB |
 
 Everything else is **<100 MB**. You almost certainly do not need both large
 datasets to reproduce a given figure. Pick one of the workflows below.
 
 ### Recommended: minimal clone
 
-Clone without the big blobs or LFS files:
+Skip LFS downloads at clone time, then opt in to what you need:
 
 ```bash
-GIT_LFS_SKIP_SMUDGE=1 git clone --filter=blob:none \
+GIT_LFS_SKIP_SMUDGE=1 git clone \
     https://github.com/thomasspieksma/BBH_stars.git
 cd BBH_stars
 ./download_data.sh           # interactive menu
@@ -73,7 +74,7 @@ cd BBH_stars
 |-------------|--------------------------------------------------------------|--------------|
 | `code-only` | scripts only                                                 | <1 MB        |
 | `small`     | code + small data (`convergence-tests`, `data-V=0`, …)       | ~95 MB       |
-| `V0`        | `small` + `data-V=0-varying-Tmax`                            | ~2.5 GB      |
+| `V0`        | `small` + `data-V=0-varying-Tmax` (LFS)                      | ~2.5 GB      |
 | `Vneq0`     | `small` + all LFS files in `data-Vneq0`                      | ~3.6 GB      |
 | `all`       | everything                                                   | ~6 GB        |
 
