@@ -1,6 +1,6 @@
 # BBH_stars
 
-Code and data accompanying the paper
+Code and data for the paper
 
 > **Self-acceleration of Hardening Binaries**
 > Giovanni Maria Tomaselli & Thomas F. M. Spieksma
@@ -34,7 +34,7 @@ output data.
                        data-V=0/                 — main isotropic dataset (Figs. 2-4)
                        data-V=0-varying-Tmax/    — Tmax-resolved scans (Figs. 7-8)   ⚠ ~2.4 GB
                        data-Vneq0/               — anisotropic SH-moment files (LFS)  ⚠ ~3.5 GB
-                       stopping-condition-3/     — Bonetti-criterion comparison
+                       stopping-condition-3/     — Criterion to compare against Bonetti et al. (2020)
 N-body/
   nbody_core.{c,h}     — direct N-body force/integrator (C shared library)
   Makefile
@@ -58,7 +58,7 @@ datasets to reproduce a given figure. Pick one of the workflows below.
 
 ### Recommended: minimal clone
 
-Skip large blobs and LFS at clone time, then opt in to what you need:
+Clone without the big blobs or LFS files:
 
 ```bash
 GIT_LFS_SKIP_SMUDGE=1 git clone --filter=blob:none \
@@ -67,7 +67,7 @@ cd BBH_stars
 ./download_data.sh           # interactive menu
 ```
 
-`download_data.sh` modes (also accepted as the first CLI argument):
+`download_data.sh` has a few preset modes (also accepted as the first argument):
 
 | Mode        | Includes                                                     | Approx. size |
 |-------------|--------------------------------------------------------------|--------------|
@@ -77,7 +77,7 @@ cd BBH_stars
 | `Vneq0`     | `small` + all LFS files in `data-Vneq0`                      | ~3.6 GB      |
 | `all`       | everything                                                   | ~6 GB        |
 
-You can also fetch a subset of the `data-Vneq0` LFS files by glob, e.g.
+You can also pull a subset of the LFS files by glob:
 
 ```bash
 ./download_data.sh Vneq0 'q=0.001_*.bin'
@@ -121,8 +121,9 @@ off a Keplerian binary and writes one row per incoming-velocity bin.
 
 - `q`: mass ratio $m_2/m_1 \in (0,1]$
 - `e`: binary eccentricity $\in [0,1)$
-- Two compile-time toggles at the top of the file:
-  - `ENABLE_BONETTI_CONDITION_3` — adds the Rasskazov/Bonetti dwell-time stopping criterion
+
+There are two compile-time toggles at the top of `main.cpp`:
+  - `ENABLE_BONETTI_CONDITION_3` — adds the additional stopping criterion from Rasskazov et al. (2019)/Bonetti et al. (2020)
   - `ENABLE_HARMONIC_OUTPUT` — emits per-particle and/or spherical-harmonic-moment binary files (used for $V \neq 0$ analysis)
 
 Output files are named `q=<q>_e=<e>_Tcut=<Tmax>.txt`,
@@ -174,8 +175,7 @@ fetched the LFS files).
 
 ```bash
 cd N-body
-python sim_uniform_medium_c.py --q 0.3 --e0 0.5 --N 30000 --n_steps 40000
-python sim_uniform_medium_c.py --n_runs 10 --seed 40    # parallel ensemble
+python3 sim_uniform_medium_c.py --q 0.2 --e0 0.5 --a0_over_ah 0.6 --N 5000000 --L 38 --m_star 5.6e-7 --n_steps 240000 --dt 0.005 --seed 10 --n_runs 20 --v_eject_cut -1
 ```
 
 Outputs `Data/<label>.csv` and `<label>.json`; see the script's docstring for
