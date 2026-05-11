@@ -85,7 +85,8 @@ You can also pull a subset of the LFS files by glob:
 git lfs pull --include='3-body/3-body-data/data-Vneq0/q=0.2_e=0.6.bin'
 ```
 
-A normal `git clone` will fetch everything by default.
+A normal `git clone` (without `GIT_LFS_SKIP_SMUDGE=1`) auto-fetches all
+~5.9 GB of LFS data if Git LFS is installed — ~7 GB total on disk.
 
 ---
 
